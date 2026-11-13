@@ -318,10 +318,10 @@ func TestAliasComesFromFlagOrContext(t *testing.T) {
 		cluster string
 		want    string
 	}{
-		{"flag wins", "synthetic", "tower", "tower"},
-		{"valid context", "tower", "", "tower"},
+		{"flag wins", "synthetic", "lab", "lab"},
+		{"valid context", "lab", "", "lab"},
 		{"context with a host drops to unnamed", "admin@192.0.2.10", "", report.UnnamedAlias},
-		{"flag skips an invalid context", "admin@192.0.2.10", "apiary", "apiary"},
+		{"flag skips an invalid context", "admin@192.0.2.10", "edge", "edge"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

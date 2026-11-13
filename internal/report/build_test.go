@@ -10,7 +10,7 @@ import (
 
 func observed(nodes *Nodes, readyz *Readyz) Observation {
 	return Observation{
-		Cluster:   Cluster{Alias: "tower", Expected: Light},
+		Cluster:   Cluster{Alias: "lab", Expected: Light},
 		Apiserver: Apiserver{Result: Up},
 		Readyz:    readyz,
 		Nodes:     nodes,
@@ -125,7 +125,7 @@ func TestBuildObservedSeverity(t *testing.T) {
 
 func TestBuildExpectedDark(t *testing.T) {
 	down := Observation{
-		Cluster:   Cluster{Alias: "tower", Expected: Dark},
+		Cluster:   Cluster{Alias: "lab", Expected: Dark},
 		Apiserver: Apiserver{Result: Down},
 	}
 	doc := Build(down, time.Now())
@@ -168,7 +168,7 @@ func TestBuildUnobservedOmitsSeverity(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			obs := Observation{
-				Cluster:   Cluster{Alias: "tower", Expected: Light},
+				Cluster:   Cluster{Alias: "lab", Expected: Light},
 				Apiserver: Apiserver{Result: tc.result},
 				Readyz:    readyOK(), // partial evidence must survive
 				Failure:   tc.failure,
@@ -198,7 +198,7 @@ func TestBuildUnobservedOmitsSeverity(t *testing.T) {
 
 func TestBuildUnknownWithoutCauseIsUnobserved(t *testing.T) {
 	doc := Build(Observation{
-		Cluster:   Cluster{Alias: "tower", Expected: Light},
+		Cluster:   Cluster{Alias: "lab", Expected: Light},
 		Apiserver: Apiserver{Result: Unknown},
 	}, time.Now())
 
@@ -216,7 +216,7 @@ func TestBuildUnknownWithoutCauseIsUnobserved(t *testing.T) {
 func TestBuildClampsErrorMessage(t *testing.T) {
 	long := strings.Repeat("x", maxErrorLen+50)
 	doc := Build(Observation{
-		Cluster:   Cluster{Alias: "tower", Expected: Light},
+		Cluster:   Cluster{Alias: "lab", Expected: Light},
 		Apiserver: Apiserver{Result: Up},
 		Failure:   exitcode.New(exitcode.InternalError, "%s", long),
 	}, time.Now())
