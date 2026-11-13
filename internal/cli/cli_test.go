@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/Hedronite/scry/internal/exitcode"
@@ -61,18 +60,6 @@ func TestUsageErrorsExitEightWithoutDocument(t *testing.T) {
 		}
 		if out != "" {
 			t.Errorf("%v: usage error wrote a document: %q", args, out)
-		}
-	}
-}
-
-func TestStubsAreInternalSevenUntilK1(t *testing.T) {
-	for _, args := range [][]string{
-		{"status", "--kubeconfig", "x"},
-		{"wait", "--for", "readyz", "--kubeconfig", "x"},
-	} {
-		code, _, errs := run(t, args...)
-		if code != int(exitcode.Internal) || !strings.Contains(errs, "not implemented") {
-			t.Errorf("%v: code = %d, stderr %q", args, code, errs)
 		}
 	}
 }
