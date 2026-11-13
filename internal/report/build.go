@@ -10,15 +10,6 @@ import (
 // maxErrorLen bounds the message carried in Document.Error (schema maxLength).
 const maxErrorLen = 400
 
-// Node reasons that mean "no verdict", not "not ready". The node controller sets
-// NodeStatusUnknown when a kubelet stops reporting; kubelet itself only ever
-// writes True or False. The schema carries readiness as one bool plus the reason,
-// so these two stable reasons are how "unknown" survives that shape.
-const (
-	reasonNodeStatusUnknown      = "NodeStatusUnknown"
-	reasonNodeStatusNeverUpdated = "NodeStatusNeverUpdated"
-)
-
 // Build turns raw evidence into a scry.status/v0 document. Severity is absent
 // whenever the cluster could not be observed, so no consumer can ingest a false
 // RED from a config, auth or TLS failure.
@@ -85,24 +76,19 @@ func verdict(obs Observation) (Severity, []exitcode.Reason) {
 		case 0:
 			worse(Red, exitcode.NoNodes)
 		default:
-			notReady, unknown := 0, 0
+			// Ready is the count that matters; a node whose Ready condition is
+			// Unknown reports no verdict, so it is neither ready nor failed.
+			ready := 0
 			for _, node := range nodes.Items {
 				if node.Ready {
-					continue
+					ready++
 				}
-				if nodeStatusUnknown(node) {
-					unknown++
-					continue
-				}
-				notReady++
 			}
 			switch {
-			case notReady > 0 && nodes.Ready == 0:
+			case ready == 0:
+				// Every node is not ready or not reporting: nothing can run.
 				worse(Red, exitcode.NodeNotReady)
-			case notReady > 0:
-				worse(Yellow, exitcode.NodeNotReady)
-			case unknown > 0:
-				// A node that stopped reporting is degraded, not failed.
+			case ready < len(nodes.Items):
 				worse(Yellow, exitcode.NodeNotReady)
 			default:
 			}
@@ -115,11 +101,6 @@ func verdict(obs Observation) (Severity, []exitcode.Reason) {
 		}
 	}
 	return severity, reasons
-}
-
-// nodeStatusUnknown reports a Ready condition the server called Unknown.
-func nodeStatusUnknown(node Node) bool {
-	return node.Reason == reasonNodeStatusUnknown || node.Reason == reasonNodeStatusNeverUpdated
 }
 
 func rank(s Severity) int {

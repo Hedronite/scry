@@ -10,7 +10,7 @@ import (
 
 func observed(nodes *Nodes, readyz *Readyz) Observation {
 	return Observation{
-		Cluster:   Cluster{Alias: "lab", Expected: Light},
+		Cluster:   Cluster{Alias: "lab-one", Expected: Light},
 		Apiserver: Apiserver{Result: Up},
 		Readyz:    readyz,
 		Nodes:     nodes,
@@ -39,20 +39,48 @@ func TestBuildObservedSeverity(t *testing.T) {
 	}{
 		{
 			name:     "all green",
-			obs:      observed(nodesOf(Node{Name: "a", Ready: true}), readyOK()),
+			obs:      observed(nodesOf(Node{Name: "node-a", Ready: true}), readyOK()),
 			want:     Green,
 			wantCode: exitcode.Green,
 		},
 		{
 			name:     "one node not ready is degraded",
-			obs:      observed(nodesOf(Node{Name: "a", Ready: true}, Node{Name: "b", Reason: "RuntimeNotReady"}), readyOK()),
+			obs:      observed(nodesOf(Node{Name: "node-a", Ready: true}, Node{Name: "node-b", Reason: "RuntimeNotReady"}), readyOK()),
+			want:     Yellow,
+			wantCode: exitcode.Yellow,
+			reasons:  []exitcode.Reason{exitcode.NodeNotReady},
+		},
+		{
+			name:     "one node unknown is degraded",
+			obs:      observed(nodesOf(Node{Name: "node-a", Ready: true}, Node{Name: "node-b", Unknown: true, Reason: "NodeStatusUnknown"}), readyOK()),
+			want:     Yellow,
+			wantCode: exitcode.Yellow,
+			reasons:  []exitcode.Reason{exitcode.NodeNotReady},
+		},
+		{
+			name:     "unknown and not ready with one ready is degraded",
+			obs:      observed(nodesOf(Node{Name: "node-a", Ready: true}, Node{Name: "node-b", Unknown: true}, Node{Name: "node-c"}), readyOK()),
 			want:     Yellow,
 			wantCode: exitcode.Yellow,
 			reasons:  []exitcode.Reason{exitcode.NodeNotReady},
 		},
 		{
 			name:     "no node ready is red",
-			obs:      observed(nodesOf(Node{Name: "a", Reason: "RuntimeNotReady"}, Node{Name: "b", Reason: "KubeletReady"}), readyOK()),
+			obs:      observed(nodesOf(Node{Name: "node-a", Reason: "RuntimeNotReady"}, Node{Name: "node-b", Reason: "KubeletReady"}), readyOK()),
+			want:     Red,
+			wantCode: exitcode.Red,
+			reasons:  []exitcode.Reason{exitcode.NodeNotReady},
+		},
+		{
+			name:     "every node unknown is red",
+			obs:      observed(nodesOf(Node{Name: "node-a", Unknown: true, Reason: "NodeStatusUnknown"}, Node{Name: "node-b", Unknown: true, Reason: "NodeStatusUnknown"}), readyOK()),
+			want:     Red,
+			wantCode: exitcode.Red,
+			reasons:  []exitcode.Reason{exitcode.NodeNotReady},
+		},
+		{
+			name:     "unknown mixed with not ready and nothing ready is red",
+			obs:      observed(nodesOf(Node{Name: "node-a", Unknown: true}, Node{Name: "node-b", Reason: "RuntimeNotReady"}), readyOK()),
 			want:     Red,
 			wantCode: exitcode.Red,
 			reasons:  []exitcode.Reason{exitcode.NodeNotReady},
@@ -66,34 +94,35 @@ func TestBuildObservedSeverity(t *testing.T) {
 		},
 		{
 			name:     "readyz failure is red",
-			obs:      observed(nodesOf(Node{Name: "a", Ready: true}), &Readyz{Mode: ModeVerbose, Checks: []Check{{Name: "etcd"}}}),
+			obs:      observed(nodesOf(Node{Name: "node-a", Ready: true}), &Readyz{Mode: ModeVerbose, Checks: []Check{{Name: "etcd"}}}),
 			want:     Red,
 			wantCode: exitcode.Red,
 			reasons:  []exitcode.Reason{exitcode.ReadyzFailed},
 		},
 		{
 			name:     "network unavailable is degraded",
-			obs:      observed(nodesOf(Node{Name: "a", Ready: true, NetworkUnavailable: true}), readyOK()),
+			obs:      observed(nodesOf(Node{Name: "node-a", Ready: true, NetworkUnavailable: true}), readyOK()),
 			want:     Yellow,
 			wantCode: exitcode.Yellow,
 			reasons:  []exitcode.Reason{exitcode.NetworkUnavailable},
 		},
 		{
-			name: "a node that stopped reporting is degraded, not failed",
-			obs: observed(nodesOf(
-				Node{Name: "a", Ready: true},
-				Node{Name: "b", Reason: reasonNodeStatusUnknown},
-			), readyOK()),
-			want:     Yellow,
-			wantCode: exitcode.Yellow,
-			reasons:  []exitcode.Reason{exitcode.NodeNotReady},
-		},
-		{
 			name:     "readyz failure outranks a degraded node",
-			obs:      observed(nodesOf(Node{Name: "a", Ready: true}, Node{Name: "b"}), &Readyz{Mode: ModeAggregate}),
+			obs:      observed(nodesOf(Node{Name: "node-a", Ready: true}, Node{Name: "node-b"}), &Readyz{Mode: ModeAggregate}),
 			want:     Red,
 			wantCode: exitcode.Red,
 			reasons:  []exitcode.Reason{exitcode.ReadyzFailed, exitcode.NodeNotReady},
+		},
+		{
+			name: "the item list is the truth, not the summary count",
+			obs: observed(&Nodes{
+				Total: 2,
+				Ready: 2, // a wrong summary must not hide a node that is not ready
+				Items: []Node{{Name: "node-a", Ready: true}, {Name: "node-b"}},
+			}, readyOK()),
+			want:     Yellow,
+			wantCode: exitcode.Yellow,
+			reasons:  []exitcode.Reason{exitcode.NodeNotReady},
 		},
 	}
 	for _, tc := range cases {
@@ -125,7 +154,7 @@ func TestBuildObservedSeverity(t *testing.T) {
 
 func TestBuildExpectedDark(t *testing.T) {
 	down := Observation{
-		Cluster:   Cluster{Alias: "lab", Expected: Dark},
+		Cluster:   Cluster{Alias: "lab-one", Expected: Dark},
 		Apiserver: Apiserver{Result: Down},
 	}
 	doc := Build(down, time.Now())
@@ -159,16 +188,16 @@ func TestBuildUnobservedOmitsSeverity(t *testing.T) {
 		result   Result
 		wantCode exitcode.Code
 	}{
-		{"auth", exitcode.New(exitcode.AuthRejected, "the apiserver rejected the credential"), Up, exitcode.Auth},
-		{"rbac", exitcode.New(exitcode.RBACDenied, "grant get,list on nodes"), Up, exitcode.Auth},
-		{"tls", exitcode.New(exitcode.TLSVerifyFailed, "did not verify"), Up, exitcode.TLS},
-		{"silent", exitcode.New(exitcode.HTTPUnresponsive, "no answer"), Unknown, exitcode.Transport},
-		{"config", exitcode.New(exitcode.ExecAuthRefused, "exec is refused"), Up, exitcode.Config},
+		{name: "auth", failure: exitcode.New(exitcode.AuthRejected, "the apiserver rejected the credential"), result: Up, wantCode: exitcode.Auth},
+		{name: "rbac", failure: exitcode.New(exitcode.RBACDenied, "grant get,list on nodes"), result: Up, wantCode: exitcode.Auth},
+		{name: "tls", failure: exitcode.New(exitcode.TLSVerifyFailed, "did not verify"), result: Up, wantCode: exitcode.TLS},
+		{name: "silent", failure: exitcode.New(exitcode.HTTPUnresponsive, "no answer"), result: Unknown, wantCode: exitcode.Transport},
+		{name: "config", failure: exitcode.New(exitcode.ExecAuthRefused, "exec is refused"), result: Up, wantCode: exitcode.Config},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			obs := Observation{
-				Cluster:   Cluster{Alias: "lab", Expected: Light},
+				Cluster:   Cluster{Alias: "lab-one", Expected: Light},
 				Apiserver: Apiserver{Result: tc.result},
 				Readyz:    readyOK(), // partial evidence must survive
 				Failure:   tc.failure,
@@ -198,7 +227,7 @@ func TestBuildUnobservedOmitsSeverity(t *testing.T) {
 
 func TestBuildUnknownWithoutCauseIsUnobserved(t *testing.T) {
 	doc := Build(Observation{
-		Cluster:   Cluster{Alias: "lab", Expected: Light},
+		Cluster:   Cluster{Alias: "lab-one", Expected: Light},
 		Apiserver: Apiserver{Result: Unknown},
 	}, time.Now())
 
@@ -216,7 +245,7 @@ func TestBuildUnknownWithoutCauseIsUnobserved(t *testing.T) {
 func TestBuildClampsErrorMessage(t *testing.T) {
 	long := strings.Repeat("x", maxErrorLen+50)
 	doc := Build(Observation{
-		Cluster:   Cluster{Alias: "lab", Expected: Light},
+		Cluster:   Cluster{Alias: "lab-one", Expected: Light},
 		Apiserver: Apiserver{Result: Up},
 		Failure:   exitcode.New(exitcode.InternalError, "%s", long),
 	}, time.Now())
@@ -227,7 +256,7 @@ func TestBuildClampsErrorMessage(t *testing.T) {
 }
 
 func TestBuildTimestampIsUTCSeconds(t *testing.T) {
-	doc := Build(observed(nodesOf(Node{Name: "a", Ready: true}), readyOK()), time.Date(2026, 11, 13, 15, 4, 5, 987654321, time.FixedZone("x", 3600)))
+	doc := Build(observed(nodesOf(Node{Name: "node-a", Ready: true}), readyOK()), time.Date(2026, 11, 13, 15, 4, 5, 987654321, time.FixedZone("x", 3600)))
 	if got := doc.GeneratedAt.UTC().Format(timestampLayout); got != "2026-11-13T14:04:05Z" {
 		t.Fatalf("generated_at = %s", got)
 	}

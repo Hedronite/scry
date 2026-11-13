@@ -109,7 +109,12 @@ func (t allowedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err := allowed(r.Method, r.URL.Path, query); err != nil {
 		return nil, err
 	}
-	return t.next.RoundTrip(r)
+	// One fresh connection per request: the allowlisted endpoints are cheap, and
+	// a poller must never ride a pooled connection or a rotated certificate. The
+	// request is copied because a RoundTripper may not modify its argument.
+	cloned := *r
+	cloned.Close = true
+	return t.next.RoundTrip(&cloned)
 }
 
 // pathOf is the printable target of a request whose URL may not be usable.
