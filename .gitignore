@@ -1,0 +1,29 @@
+# Build output
+/scry
+/dist/
+/bin/
+
+# Go test and coverage artifacts
+*.test
+*.out
+coverage.*
+
+# Kubernetes credentials: never commit a real kubeconfig
+kubeconfig
+*.kubeconfig
+kubeconfig.yaml
+kubeconfig.yml
+.kube/
+
+# Key material
+*.pem
+*.key
+*.crt
+*.p12
+
+# Local environment and editors
+.env
+.env.*
+.idea/
+.vscode/
+.DS_Store
