@@ -47,8 +47,8 @@ func docYellow() report.Document {
 		Cluster:     report.Cluster{Alias: "lab-one", Expected: report.Light},
 		Server:      &report.Server{Version: "v1.34.0+h3s", Flavor: "h3s"},
 		Apiserver:   report.Apiserver{Result: report.Up, HTTPStatus: fxPtr(200), LatencyMS: fxPtr(int64(18))},
-		Readyz: &report.Readyz{Mode: report.ModeVerbose, OK: false, Checks: []report.Check{
-			{Name: "etcd", OK: false, Message: "etcd check failed"}, {Name: "ping", OK: true},
+		Readyz: &report.Readyz{Mode: report.ModeVerbose, OK: true, Checks: []report.Check{
+			{Name: "etcd", OK: true}, {Name: "ping", OK: true},
 		}},
 		Nodes: &report.Nodes{Total: 2, Ready: 1, Items: []report.Node{
 			{Name: "node-a", Ready: true},
@@ -57,7 +57,7 @@ func docYellow() report.Document {
 		Observed: true,
 		Severity: report.Yellow,
 		Reasons: []exitcode.Reason{
-			exitcode.ReadyzFailed, exitcode.NodeNotReady, exitcode.NetworkUnavailable,
+			exitcode.NodeNotReady, exitcode.NetworkUnavailable,
 		},
 	}
 }
@@ -120,11 +120,11 @@ func docWaitTimeout() report.Document {
 		Cluster:     report.Cluster{Alias: "lab-one", Expected: report.Light},
 		Server:      &report.Server{Version: "v1.34.0+h3s", Flavor: "h3s"},
 		Apiserver:   report.Apiserver{Result: report.Up, HTTPStatus: fxPtr(200), LatencyMS: fxPtr(int64(12))},
-		Readyz:      &report.Readyz{Mode: report.ModeAggregate, OK: true, Checks: []report.Check{}},
+		Readyz:      &report.Readyz{Mode: report.ModeAggregate, OK: false, Checks: []report.Check{}},
 		Nodes:       &report.Nodes{Total: 1, Ready: 1, Items: []report.Node{{Name: "node-a", Ready: true}}},
 		Observed:    true,
-		Severity:    report.Green,
-		Reasons:     []exitcode.Reason{exitcode.Timeout},
+		Severity:    report.Red,
+		Reasons:     []exitcode.Reason{exitcode.Timeout, exitcode.ReadyzFailed},
 		Wait:        &report.Wait{Outcome: report.WaitTimeout, Polls: 4, ElapsedMS: 61500},
 	}
 }
@@ -157,14 +157,14 @@ severity:   GREEN`,
 as of:      2026-11-13T20:00:00Z
 server:     v1.34.0+h3s (h3s)
 apiserver:  up, http 200, 18ms
-readyz:     verbose, FAILED, 1 of 2 checks failed
-            FAIL  etcd: etcd check failed
+readyz:     verbose, ok
+            ok    etcd
             ok    ping
 nodes:      1 of 2 ready
             ready     node-a
             NOT READY node-b (RuntimeNotReady, network unavailable)
 severity:   YELLOW
-reasons:    readyz_failed, node_not_ready, network_unavailable`,
+reasons:    node_not_ready, network_unavailable`,
 		},
 		{
 			"red", docRed(),
@@ -207,11 +207,11 @@ reasons:    tls_verify_failed`,
 as of:      2026-11-13T20:00:00Z
 server:     v1.34.0+h3s (h3s)
 apiserver:  up, http 200, 12ms
-readyz:     aggregate, ok (no sub-checks reported)
+readyz:     aggregate, FAILED (no sub-checks reported)
 nodes:      1 of 1 ready
             ready     node-a
-severity:   GREEN
-reasons:    timeout
+severity:   RED
+reasons:    timeout, readyz_failed
 wait:       timeout after 4 polls (1m1.5s)`,
 		},
 		{
@@ -239,7 +239,7 @@ error:      (no error body)`,
 // apiserver verdict with no extras, a ready-but-partitioned node, and the
 // "ready" wait outcome.
 func TestRenderDecoration(t *testing.T) {
-	d := docYellow()
+	d := docRed()
 	d.Apiserver.Livez = "ok"
 	if got := report.Render(d); !strings.Contains(got, "livez ok") {
 		t.Errorf("livez diagnostic missing:\n%s", got)

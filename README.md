@@ -58,14 +58,14 @@ cluster:    lab-one (expected light)
 as of:      2026-11-13T20:00:00Z
 server:     v1.34.0+h3s (h3s)
 apiserver:  up, http 200, 18ms
-readyz:     verbose, FAILED, 1 of 2 checks failed
-            FAIL  etcd: etcd check failed
+readyz:     verbose, ok
+            ok    etcd
             ok    ping
 nodes:      1 of 2 ready
             ready     node-a
             NOT READY node-b (RuntimeNotReady, network unavailable)
 severity:   YELLOW
-reasons:    readyz_failed, node_not_ready, network_unavailable
+reasons:    node_not_ready, network_unavailable
 ```
 
 `--json` prints one `scry.status/v0` document instead (see [`schema/scry.status.v0.json`](schema/scry.status.v0.json)); `--quiet` prints nothing and lets the exit code answer. Scripts and agents should read the JSON form: the table is for people.

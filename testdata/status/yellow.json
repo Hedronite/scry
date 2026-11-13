@@ -16,9 +16,9 @@
   },
   "readyz": {
     "mode": "verbose",
-    "ok": false,
+    "ok": true,
     "checks": [
-      { "name": "etcd", "ok": false, "message": "etcd check failed" },
+      { "name": "etcd", "ok": true },
       { "name": "ping", "ok": true }
     ]
   },
@@ -32,5 +32,5 @@
   },
   "observed": true,
   "severity": "YELLOW",
-  "reasons": ["readyz_failed", "node_not_ready", "network_unavailable"]
+  "reasons": ["node_not_ready", "network_unavailable"]
 }

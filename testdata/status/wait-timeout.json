@@ -16,7 +16,7 @@
   },
   "readyz": {
     "mode": "aggregate",
-    "ok": true,
+    "ok": false,
     "checks": []
   },
   "nodes": {
@@ -27,8 +27,8 @@
     ]
   },
   "observed": true,
-  "severity": "GREEN",
-  "reasons": ["timeout"],
+  "severity": "RED",
+  "reasons": ["timeout", "readyz_failed"],
   "wait": {
     "outcome": "timeout",
     "polls": 4,
