@@ -1,0 +1,18 @@
+{
+  "schema": "scry.status/v0",
+  "generated_at": "2026-11-13T20:00:00Z",
+  "cluster": {
+    "alias": "lab-two",
+    "expected": "light"
+  },
+  "apiserver": {
+    "result": "up",
+    "http_status": 401
+  },
+  "observed": false,
+  "reasons": ["auth_rejected"],
+  "error": {
+    "code": "auth_rejected",
+    "message": "server rejected the credentials"
+  }
+}
