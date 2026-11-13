@@ -31,7 +31,7 @@
   "reasons": ["timeout", "readyz_failed"],
   "wait": {
     "outcome": "timeout",
-    "polls": 4,
-    "elapsed_ms": 61500
+    "polls": 5,
+    "elapsed_ms": 60000
   }
 }

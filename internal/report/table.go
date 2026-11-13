@@ -3,7 +3,6 @@ package report
 import (
 	"fmt"
 	"strings"
-	"time"
 )
 
 // col is the width of the label column; sub-rows indent by the same amount.
@@ -45,7 +44,10 @@ func Render(d Document) string {
 		row(&b, "nodes", headline)
 		for _, it := range n.Items {
 			status := "ready"
-			if !it.Ready {
+			switch {
+			case it.Unknown:
+				status = "UNKNOWN"
+			case !it.Ready:
 				status = "NOT READY"
 			}
 			line := fmt.Sprintf("%-10s%s", status, it.Name)
@@ -78,8 +80,12 @@ func Render(d Document) string {
 		row(&b, "reasons", strings.Join(rs, ", "))
 	}
 	if d.Wait != nil {
-		dur := time.Duration(d.Wait.ElapsedMS) * time.Millisecond
-		row(&b, "wait", fmt.Sprintf("%s after %d polls (%s)", d.Wait.Outcome, d.Wait.Polls, dur))
+		outcome := d.Wait.Outcome
+		if outcome == WaitTimeout {
+			outcome = "timed out"
+		}
+		row(&b, "wait", fmt.Sprintf("%s after %d polls, %.1fs",
+			outcome, d.Wait.Polls, float64(d.Wait.ElapsedMS)/1000))
 	}
 	return strings.TrimSuffix(b.String(), "\n")
 }
