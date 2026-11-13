@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
-# scrub.sh — secret-and-mesh tripwire for this repository.
+# scrub.sh — credential-and-location tripwire for this repository.
 #
-# Scans every tracked file in the work tree, and every blob reachable from a
-# ref, for generic credential shapes: cloud access keys, forge and app tokens,
-# live payment keys, private-key blocks, kubeconfig key material, long bearer
-# tokens, and tailnet addresses. The CI job checks out full history for this.
+# Two tiers, because a secret and an address leak in different places:
 #
-# Matched content is never printed — only class, path and line — so the job log
-# cannot become the leak it is looking for.
+#   Tier A (credentials) scans every tracked file and every commit reachable
+#   from a ref, with testdata/, docs/, *_test.go and this script path-allowlisted
+#   because those legitimately hold synthetic samples.
 #
-# Scope:
+#   Tier B (locations) scans ALL tracked files and history except this script:
+#   fixtures and docs are exactly where a real address, port, home path or
+#   private hostname would land. There is no path allowlist in Tier B.
+#
+#   A `scrub:allow` marker on the line escapes either tier. Matched content is
+#   never printed — only class, path and line — so the job log cannot become
+#   the leak it is looking for.
+#
+# Scope notes:
 #   - Tracked files only; untracked scratch files are not scanned.
-#   - Path-allowlisted: this script (it holds the pattern literals), testdata/,
-#     docs/ and *_test.go (synthetic fixtures); or a `scrub:allow` marker on
-#     the offending line.
 #   - A shallow clone scans the work tree only, and says so.
-#   - History scan is per commit; acceptable for this repo's size, revisit if
-#     the log grows into the thousands.
+#   - History scan is per commit; acceptable for this repository's size.
 #
 # Usage: bash hack/scrub.sh [--no-self-test]
 # Exit:  0 clean, 1 findings, 2 environment or detector defect.
@@ -42,9 +44,9 @@ root=$(git rev-parse --show-toplevel 2>/dev/null) || {
 }
 cd "$root" || exit 2
 
-# Generic classes only: name|extended-regex. SAMPLES is index-parallel and
-# exists so the detector proves itself; add both entries together.
-CLASSES=(
+# Tier A: name|extended-regex. SAMPLES_CRED is index-parallel and exists so the
+# detector proves itself; add both entries together.
+CRED_CLASSES=(
   'aws-access-key|(AKIA|ASIA)[0-9A-Z]{16}'
   'github-token|gh[pousr]_[A-Za-z0-9]{36}'
   'github-fine-grained-pat|github_pat_[A-Za-z0-9_]{22,}'
@@ -57,7 +59,7 @@ CLASSES=(
   'tailnet-address|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}'
   'tailnet-dns|([[:alnum:]-]+\.)+ts\.net'
 )
-SAMPLES=(
+SAMPLES_CRED=(
   'AKIAIOSFODNN7EXAMPLE'
   'ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
   'github_pat_AAAAAAAAAAAAAAAAAAAAAAAAAA'
@@ -71,38 +73,53 @@ SAMPLES=(
   'node.example.ts.net'
 )
 
-pattern=
-for class in "${CLASSES[@]}"; do
-  re=${class#*|}
-  pattern=${pattern:+$pattern|}${re}
-done
+# Tier B: name|extended-regex. IPv4 and IPv6 are matched broadly, then filtered
+# by the allowance sets below (loopback, unspecified, documentation ranges).
+LOC_CLASSES=(
+  'ipv4-literal|([0-9]{1,3}\.){3}[0-9]{1,3}'
+  'ipv6-literal|([0-9A-Fa-f]{0,4}:){3,7}[0-9A-Fa-f]{0,4}|::[0-9A-Fa-f]{1,4}'
+  'kube-apiserver-port|:6443([^0-9]|$)'
+  'home-path|/Users/|/home/[[:alnum:]_.-]+/'
+  'private-hostname|\.(local|lan|internal|home\.arpa|ts\.net)([^[:alnum:].-]|$)'
+  'jwt|eyJ[A-Za-z0-9_-]{10,}\.'
+)
+SAMPLES_LOC=(
+  '10.1.2.3'
+  'fd00::12'
+  'fd00:0:0:0:0:0:0:1'
+  ':6443'
+  '/Users/example/projects/cluster'
+  'api.internal'
+  'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0'
+)
 
-excludes=(
-  ':(exclude,glob)hack/scrub.sh'
+join_patterns() { # name|regex... -> alternation
+  local class pattern=
+  for class in "$@"; do
+    pattern=${pattern:+$pattern|}${class#*|}
+  done
+  printf '%s' "$pattern"
+}
+
+cred_pattern=$(join_patterns "${CRED_CLASSES[@]}")
+loc_pattern=$(join_patterns "${LOC_CLASSES[@]}")
+
+script_path=':(exclude,glob)hack/scrub.sh'
+cred_excludes=(
+  "$script_path"
   ':(exclude,glob)testdata/**'
   ':(exclude,glob)docs/**'
   ':(exclude,glob)**/*_test.go'
 )
+loc_excludes=("$script_path")
 
 max_shown=200
 seen=
 findings=0
 shown=0
 
-classify() {
-  local line=$1 class name re
-  for class in "${CLASSES[@]}"; do
-    name=${class%%|*}
-    re=${class#*|}
-    if [[ $line =~ $re ]]; then
-      printf '%s' "$name"
-      return 0
-    fi
-  done
-  printf 'credential-pattern'
-}
-
-# note KEY LABEL CLASS — dedupe on KEY, print at most max_shown.
+# note KEY LABEL CLASS — dedupe on KEY (one row per location), print at most
+# max_shown rows.
 note() {
   local key=$1 label=$2 class=$3
   case " $seen " in
@@ -116,48 +133,138 @@ note() {
   fi
 }
 
+classify_cred() { # content -> class, empty if none
+  local content=$1 class name re
+  for class in "${CRED_CLASSES[@]}"; do
+    name=${class%%|*}
+    re=${class#*|}
+    if [[ $content =~ $re ]]; then
+      printf '%s' "$name"
+      return 0
+    fi
+  done
+  return 0
+}
+
+ipv4_disallowed() { # content -> 0 when a non-allowlisted IPv4 is present
+  local ip a b c d
+  while IFS= read -r ip; do
+    [ -z "$ip" ] && continue
+    case $ip in
+      127.0.0.1|0.0.0.0) continue ;;
+    esac
+    IFS=. read -r a b c d <<< "$ip"
+    if [ "$a" = 192 ] && [ "$b" = 0 ] && [ "$c" = 2 ]; then continue; fi
+    if [ "$a" = 198 ] && [ "$b" = 51 ] && [ "$c" = 100 ]; then continue; fi
+    if [ "$a" = 203 ] && [ "$b" = 0 ] && [ "$c" = 113 ]; then continue; fi
+    return 0
+  done < <(printf '%s\n' "$1" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}')
+  return 1
+}
+
+ipv6_disallowed() { # content -> 0 when a non-allowlisted IPv6 literal is present
+  local ip low
+  while IFS= read -r ip; do
+    [ -z "$ip" ] && continue
+    case $ip in
+      *[0-9A-Fa-f]*) ;;
+      *) continue ;; # bare '::' carries no address; it is allowed and unreported
+    esac
+    low=$(printf '%s' "$ip" | tr 'A-F' 'a-f')
+    case $low in
+      '::1'|'::') continue ;;
+      2001:db8:*|2001:0db8:*) continue ;;
+    esac
+    return 0
+  done < <(printf '%s\n' "$1" | grep -oE '([0-9A-Fa-f]{0,4}:){3,7}[0-9A-Fa-f]{0,4}|::[0-9A-Fa-f]{1,4}')
+  return 1
+}
+
+classify_loc() { # content -> class, empty if none
+  local content=$1 class name re
+  for class in "${LOC_CLASSES[@]}"; do
+    name=${class%%|*}
+    re=${class#*|}
+    case $name in
+      ipv4-literal)
+        ipv4_disallowed "$content" && { printf '%s' "$name"; return 0; }
+        ;;
+      ipv6-literal)
+        ipv6_disallowed "$content" && { printf '%s' "$name"; return 0; }
+        ;;
+      *)
+        if [[ $content =~ $re ]]; then
+          printf '%s' "$name"
+          return 0
+        fi
+        ;;
+    esac
+  done
+  return 0
+}
+
 scan_worktree() {
-  local out line rest file line_no
-  out=$(git grep -n -I -E -e "$pattern" -- . "${excludes[@]}" || true)
-  [ -z "$out" ] && return 0
+  local out line file line_no content class
+  out=$(git grep -n -I -E -e "$cred_pattern" -- . "${cred_excludes[@]}" || true)
   while IFS= read -r line; do
     case $line in
       *scrub:allow*) continue ;;
     esac
-    file=${line%%:*}
-    rest=${line#*:}
-    line_no=${rest%%:*}
-    note "$file:$line_no" "$file:$line_no" "$(classify "$line")"
+    IFS=: read -r file line_no content <<< "$line"
+    class=$(classify_cred "$content")
+    [ -n "$class" ] && note "$file:$line_no" "$file:$line_no" "$class"
+  done <<< "$out"
+
+  out=$(git grep -n -I -E -e "$loc_pattern" -- . "${loc_excludes[@]}" || true)
+  while IFS= read -r line; do
+    case $line in
+      *scrub:allow*) continue ;;
+    esac
+    IFS=: read -r file line_no content <<< "$line"
+    class=$(classify_loc "$content")
+    [ -n "$class" ] && note "$file:$line_no" "$file:$line_no" "$class"
   done <<< "$out"
 }
 
 scan_history() {
-  local rev out line rest sha file line_no class
+  local revs rev out line sha file line_no content class
   if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
     echo "scrub: note: shallow clone — history not scanned" >&2
     return 0
   fi
-  for rev in $(git rev-list --all); do
-    out=$(git grep -n -I -E -e "$pattern" "$rev" -- . "${excludes[@]}" || true)
-    [ -z "$out" ] && continue
+  revs=$(git rev-list --all)
+  # A detached HEAD (the shape of a PR checkout) is not under refs/.
+  case " $revs " in
+    *" $(git rev-parse --verify HEAD 2>/dev/null) "*) ;;
+    *) revs="$revs $(git rev-parse --verify HEAD 2>/dev/null)" ;;
+  esac
+  for rev in $revs; do
+    out=$(git grep -n -I -E -e "$cred_pattern" "$rev" -- . "${cred_excludes[@]}" || true)
     while IFS= read -r line; do
       case $line in
         *scrub:allow*) continue ;;
       esac
-      sha=${line%%:*}
-      rest=${line#*:}
-      file=${rest%%:*}
-      rest=${rest#*:}
-      line_no=${rest%%:*}
-      class=$(classify "$line")
-      note "$file:$line_no" "history ${sha%"${sha#???????}"}:$file:$line_no" "$class"
+      IFS=: read -r sha file line_no content <<< "$line"
+      class=$(classify_cred "$content")
+      [ -n "$class" ] && note "$file:$line_no" "history ${sha:0:7}:$file:$line_no" "$class"
+    done <<< "$out"
+
+    out=$(git grep -n -I -E -e "$loc_pattern" "$rev" -- . "${loc_excludes[@]}" || true)
+    while IFS= read -r line; do
+      case $line in
+        *scrub:allow*) continue ;;
+      esac
+      IFS=: read -r sha file line_no content <<< "$line"
+      class=$(classify_loc "$content")
+      [ -n "$class" ] && note "$file:$line_no" "history ${sha:0:7}:$file:$line_no" "$class"
     done <<< "$out"
   done
 }
 
 # self_test builds throwaway repositories and asserts the detector's edges:
-# allowlists do not fire, every class fires, history fires after the work tree
-# is clean, and no matched content is echoed.
+# allowlists do not fire, every class fires, documentation ranges and marked
+# lines do not fire, Tier B reaches fixtures and tests, a history-only leak
+# still fails after the work tree is clean, and no sample is echoed.
 self_test() {
   local script tmp out rc class name bad=0
   script=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
@@ -171,35 +278,44 @@ self_test() {
   (
     cd "$tmp/repo" || exit 2
     gc() { git -c user.name=scrub -c user.email=scrub@example.invalid "$@"; }
+    run() { bash hack/scrub.sh --no-self-test 2>&1; }
 
     printf 'ordinary source\n' > README.md
-    printf '%s\n' "${SAMPLES[0]}" > testdata/fixture.txt
-    printf '%s\n' "${SAMPLES[0]}" > docs/example.md
-    printf 'credential := "%s"\n' "${SAMPLES[0]}" > internal/probe/probe_test.go
-    printf '%s  # scrub:allow\n' "${SAMPLES[0]}" > marked.txt
+    printf '%s\n' "${SAMPLES_CRED[0]}" > testdata/fixture.txt
+    printf '%s\n' "${SAMPLES_CRED[0]}" > docs/example.md
+    printf 'credential := "%s"\n' "${SAMPLES_CRED[0]}" > internal/probe/probe_test.go
+    printf '%s  # scrub:allow\n' "${SAMPLES_CRED[0]}" > marked.txt
+    printf '%s  # scrub:allow\n' "${SAMPLES_LOC[2]}" > marked-location.txt
+    printf '192.0.2.10 198.51.100.20 203.0.113.30 127.0.0.1 0.0.0.0\n' > testdata/doc-ranges.txt
+    printf '::1\n::\n2001:db8::1\n2001:db8:ffff:1::9\n' > testdata/doc-ranges6.txt
+    printf '2006-01-02T15:04:05Z\n2026-11-13T15:00:00Z\n15:04:05\n' > testdata/timestamps.txt
     git init -q . &&
       git add -A &&
       gc commit -qm 'base with allowlisted shapes' || exit 2
 
-    # 1. Allowlists hold: clean exit, nothing reported.
-    out=$(bash hack/scrub.sh --no-self-test 2>&1) && rc=0 || rc=$?
+    # 1. Allowlists and documentation ranges hold: clean exit, nothing reported.
+    out=$(run) && rc=0 || rc=$?
     if [ "$rc" -ne 0 ]; then
       echo "scrub: self-test: allowlisted shapes fired (exit $rc)" >&2
       printf '%s\n' "$out" | sed 's/^/    /' >&2
       exit 1
     fi
 
-    # 2. Every class fires, and no matched content is echoed.
-    : > leak.txt
-    for class in "${SAMPLES[@]}"; do printf '%s\n' "$class" >> leak.txt; done
-    git add leak.txt && gc commit -qm 'planted samples' || exit 2
-    out=$(bash hack/scrub.sh --no-self-test 2>&1) && rc=0 || rc=$?
+    # 2. Every class fires, including Tier B inside testdata/ and a _test.go.
+    : > leak-cred.txt
+    for class in "${SAMPLES_CRED[@]}"; do printf '%s\n' "$class" >> leak-cred.txt; done
+    : > testdata/location.txt
+    for class in "${SAMPLES_LOC[@]}"; do printf '%s\n' "$class" >> testdata/location.txt; done
+    : > internal/probe/location_test.go
+    for class in "${SAMPLES_LOC[@]}"; do printf '// %s\n' "$class" >> internal/probe/location_test.go; done
+    git add -A && gc commit -qm 'planted samples' || exit 2
+    out=$(run) && rc=0 || rc=$?
     if [ "$rc" -ne 1 ]; then
       echo "scrub: self-test: planted samples did not fail (exit $rc)" >&2
       printf '%s\n' "$out" | sed 's/^/    /' >&2
       exit 1
     fi
-    for class in "${CLASSES[@]}"; do
+    for class in "${CRED_CLASSES[@]}" "${LOC_CLASSES[@]}"; do
       name=${class%%|*}
       case $out in
         *"($name)"*) ;;
@@ -210,7 +326,33 @@ self_test() {
           ;;
       esac
     done
-    for class in "${SAMPLES[@]}"; do
+    case $out in
+      *'testdata/location.txt:'*) ;;
+      *)
+        echo "scrub: self-test: Tier B did not reach testdata/" >&2
+        exit 1
+        ;;
+    esac
+    case $out in
+      *'location_test.go:'*) ;;
+      *)
+        echo "scrub: self-test: Tier B did not reach a _test.go file" >&2
+        exit 1
+        ;;
+    esac
+    case $out in
+      *'testdata/doc-ranges'*)
+        echo "scrub: self-test: a documented range fired" >&2
+        printf '%s\n' "$out" | sed 's/^/    /' >&2
+        exit 1
+        ;;
+      *'testdata/timestamps'*)
+        echo "scrub: self-test: a clock time fired as an address" >&2
+        printf '%s\n' "$out" | sed 's/^/    /' >&2
+        exit 1
+        ;;
+    esac
+    for class in "${SAMPLES_CRED[@]}" "${SAMPLES_LOC[@]}"; do
       case $out in
         *"$class"*)
           echo "scrub: self-test: matched content was echoed to output" >&2
@@ -220,15 +362,16 @@ self_test() {
     done
 
     # 3. History still fires once the work tree is clean.
-    git rm -q leak.txt && gc commit -qm 'drop planted samples' || exit 2
-    out=$(bash hack/scrub.sh --no-self-test 2>&1) && rc=0 || rc=$?
+    git rm -q leak-cred.txt testdata/location.txt internal/probe/location_test.go &&
+      gc commit -qm 'drop planted samples' || exit 2
+    out=$(run) && rc=0 || rc=$?
     if [ "$rc" -ne 1 ]; then
       echo "scrub: self-test: history-only leak did not fail (exit $rc)" >&2
       printf '%s\n' "$out" | sed 's/^/    /' >&2
       exit 1
     fi
     case $out in
-      *'history '*) ;;
+      *'history '*':'*) ;;
       *)
         echo "scrub: self-test: history line missing from report" >&2
         printf '%s\n' "$out" | sed 's/^/    /' >&2
@@ -262,5 +405,5 @@ if [ "$findings" -gt "$shown" ]; then
 else
   echo "scrub: $findings finding(s)" >&2
 fi
-echo "scrub: FAIL — credential-shaped content found (content is not printed)" >&2
+echo "scrub: FAIL — credential-shaped or location content found (content is not printed)" >&2
 exit 1
