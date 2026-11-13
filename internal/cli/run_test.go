@@ -171,7 +171,7 @@ func TestExpectedDarkIsGreenAndReachesTheClient(t *testing.T) {
 	if !strings.Contains(out, `"expected_dark"`) || !strings.Contains(out, `"GREEN"`) {
 		t.Fatalf("out = %s", out)
 	}
-	s = install(t, darkObs())
+	install(t, darkObs())
 	code, _, _ = run(t, "status", "--kubeconfig", "synthetic")
 	if code != 2 {
 		t.Fatalf("light + connect failure: code = %d, want 2", code)
