@@ -1,0 +1,40 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosec
+    - bodyclose
+    - noctx
+    - errorlint
+    - exhaustive
+    - depguard
+    - unused
+    - ineffassign
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+    depguard:
+      rules:
+        inspect-only:
+          list-mode: lax
+          files:
+            - $all
+          deny:
+            - pkg: os/exec
+              desc: Scry never runs other programs; exec auth is refused (tripwire, see docs/versions.md)
+            - pkg: k8s.io/client-go/plugin
+              desc: exec and auth-provider plugins are refused (tripwire)
+            - pkg: k8s.io/kubectl
+              desc: Scry is not kubectl
+            - pkg: k8s.io/cli-runtime
+              desc: Scry is not kubectl
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
