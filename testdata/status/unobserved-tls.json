@@ -1,0 +1,17 @@
+{
+  "schema": "scry.status/v0",
+  "generated_at": "2026-11-13T20:00:00Z",
+  "cluster": {
+    "alias": "lab-two",
+    "expected": "light"
+  },
+  "apiserver": {
+    "result": "up"
+  },
+  "observed": false,
+  "reasons": ["tls_verify_failed"],
+  "error": {
+    "code": "tls_verify_failed",
+    "message": "the certificate failed verification"
+  }
+}

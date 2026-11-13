@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Hedronite/scry/schema/scry.status.v0.json",
+  "title": "scry.status/v0",
+  "description": "Readiness of one cluster as seen by scry status / scry wait. severity is present iff observed is true; error is present iff observed is false.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generated_at", "cluster", "apiserver", "observed", "reasons"],
+  "properties": {
+    "schema": { "const": "scry.status/v0" },
+    "generated_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "cluster": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alias", "expected"],
+      "properties": {
+        "alias": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
+        "expected": { "enum": ["light", "dark"] }
+      }
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "flavor"],
+      "properties": {
+        "version": { "type": "string", "maxLength": 64 },
+        "flavor": { "enum": ["h3s", "kubernetes"] }
+      }
+    },
+    "apiserver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result"],
+      "properties": {
+        "result": { "enum": ["up", "down", "unknown"] },
+        "http_status": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "latency_ms": { "type": "integer", "minimum": 0 },
+        "livez": { "enum": ["ok", "failed"] }
+      }
+    },
+    "readyz": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "ok", "checks"],
+      "properties": {
+        "mode": { "enum": ["verbose", "aggregate"] },
+        "ok": { "type": "boolean" },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "ok"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "ok": { "type": "boolean" },
+              "message": { "type": "string", "maxLength": 200 }
+            }
+          }
+        }
+      }
+    },
+    "nodes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "ready", "items"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "ready": { "type": "integer", "minimum": 0 },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "ready"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 253 },
+              "ready": { "type": "boolean" },
+              "reason": { "type": "string", "maxLength": 120 },
+              "network_unavailable": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "observed": { "type": "boolean" },
+    "severity": { "enum": ["GREEN", "YELLOW", "RED"] },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "expected_dark",
+          "apiserver_down",
+          "http_unresponsive",
+          "readyz_failed",
+          "no_nodes",
+          "node_not_ready",
+          "network_unavailable",
+          "timeout",
+          "wait_expected_dark",
+          "auth_rejected",
+          "rbac_denied",
+          "tls_verify_failed",
+          "tls_cert_expired",
+          "kubeconfig_missing",
+          "kubeconfig_invalid",
+          "exec_auth_refused",
+          "auth_provider_refused",
+          "insecure_tls_refused",
+          "config_invalid",
+          "allowlist_denied",
+          "internal"
+        ]
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "$ref": "#/properties/reasons/items" },
+        "message": { "type": "string", "maxLength": 400 }
+      }
+    },
+    "wait": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "polls", "elapsed_ms"],
+      "properties": {
+        "outcome": { "enum": ["ready", "timeout"] },
+        "polls": { "type": "integer", "minimum": 1 },
+        "elapsed_ms": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "if": {
+    "required": ["observed"],
+    "properties": { "observed": { "const": true } }
+  },
+  "then": {
+    "required": ["severity"],
+    "not": { "required": ["error"] }
+  },
+  "else": {
+    "required": ["error"],
+    "not": { "required": ["severity"] }
+  }
+}

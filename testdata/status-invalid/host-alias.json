@@ -1,0 +1,14 @@
+{
+  "schema": "scry.status/v0",
+  "generated_at": "2026-11-13T20:00:00Z",
+  "cluster": {
+    "alias": "apiserver.example.invalid",
+    "expected": "light"
+  },
+  "apiserver": {
+    "result": "up"
+  },
+  "observed": true,
+  "severity": "GREEN",
+  "reasons": []
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Hedronite/scry/schema/scry.version.v0.json",
+  "title": "scry.version/v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "version", "commit", "go"],
+  "properties": {
+    "schema": { "const": "scry.version/v0" },
+    "version": { "type": "string", "minLength": 1 },
+    "commit": { "type": "string", "minLength": 1 },
+    "go": { "type": "string", "minLength": 1 }
+  }
+}

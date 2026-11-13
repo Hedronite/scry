@@ -1,0 +1,37 @@
+{
+  "schema": "scry.status/v0",
+  "generated_at": "2026-11-13T20:00:00Z",
+  "cluster": {
+    "alias": "lab-one",
+    "expected": "light"
+  },
+  "server": {
+    "version": "v1.34.0+h3s",
+    "flavor": "h3s"
+  },
+  "apiserver": {
+    "result": "up",
+    "http_status": 200,
+    "latency_ms": 12
+  },
+  "readyz": {
+    "mode": "aggregate",
+    "ok": false,
+    "checks": []
+  },
+  "nodes": {
+    "total": 1,
+    "ready": 1,
+    "items": [
+      { "name": "node-a", "ready": true }
+    ]
+  },
+  "observed": true,
+  "severity": "RED",
+  "reasons": ["timeout", "readyz_failed"],
+  "wait": {
+    "outcome": "timeout",
+    "polls": 4,
+    "elapsed_ms": 61500
+  }
+}
