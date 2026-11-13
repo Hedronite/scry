@@ -1,16 +1,7 @@
 package kube
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
-	"math/big"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,83 +12,49 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/Hedronite/scry/internal/exitcode"
+	"github.com/Hedronite/scry/internal/fakecluster"
 	"github.com/Hedronite/scry/internal/report"
 )
 
-// clusterSpec is what a synthetic kubeconfig points at.
-type clusterSpec struct {
-	server  string
-	ca      []byte // PEM; nil leaves verification to the system roots
-	token   string
-	context string
-	mutate  func(*clientcmdapi.Config)
-}
-
-// writeKubeconfig writes a throwaway kubeconfig into the test's temp dir. No
-// real address, credential or file ever leaves the process.
-func writeKubeconfig(t *testing.T, spec clusterSpec) string {
+// writeKubeconfigAt writes a minimal synthetic kubeconfig at path. No credential
+// or address it holds is real.
+func writeKubeconfigAt(t *testing.T, path string, mutate func(*clientcmdapi.Config)) string {
 	t.Helper()
-	contextName := spec.context
-	if contextName == "" {
-		contextName = "synthetic"
-	}
-	cfg := clientcmdapi.Config{
+	config := clientcmdapi.Config{
 		Clusters: map[string]*clientcmdapi.Cluster{
-			"cluster": {Server: spec.server, CertificateAuthorityData: spec.ca},
+			"cluster": {Server: "https://apiserver.invalid"},
 		},
 		AuthInfos: map[string]*clientcmdapi.AuthInfo{
-			"user": {Token: spec.token},
+			"user": {Token: "synthetic-token"},
 		},
 		Contexts: map[string]*clientcmdapi.Context{
-			contextName: {Cluster: "cluster", AuthInfo: "user"},
+			"lab-one": {Cluster: "cluster", AuthInfo: "user"},
 		},
-		CurrentContext: contextName,
+		CurrentContext: "lab-one",
 	}
-	if spec.mutate != nil {
-		spec.mutate(&cfg)
+	if mutate != nil {
+		mutate(&config)
 	}
-	path := filepath.Join(t.TempDir(), "kubeconfig")
-	if err := clientcmd.WriteToFile(cfg, path); err != nil {
+	if err := clientcmd.WriteToFile(config, path); err != nil {
 		t.Fatalf("write kubeconfig: %v", err)
 	}
 	return path
 }
 
-// tlsCluster starts a TLS server and returns it with its CA in PEM form.
-func tlsCluster(t *testing.T, handler http.Handler) (*httptest.Server, []byte) {
+func writeKubeconfigFile(t *testing.T, mutate func(*clientcmdapi.Config)) string {
 	t.Helper()
-	srv := httptest.NewTLSServer(handler)
-	t.Cleanup(srv.Close)
-	return srv, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	return writeKubeconfigAt(t, filepath.Join(t.TempDir(), "kubeconfig"), mutate)
 }
 
-// selfSignedPair returns a client certificate and key in PEM form.
-func selfSignedPair(t *testing.T) (certPEM, keyPEM []byte) {
+// writeBareKubeconfig points a kubeconfig at server with no fixture behind it.
+func writeBareKubeconfig(t *testing.T, server string, mutate func(*clientcmdapi.Config)) string {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	template := &x509.Certificate{
-		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "synthetic"},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("create certificate: %v", err)
-	}
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		t.Fatalf("marshal key: %v", err)
-	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
-		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return writeKubeconfigFile(t, func(config *clientcmdapi.Config) {
+		config.Clusters["cluster"].Server = server
+		if mutate != nil {
+			mutate(config)
+		}
+	})
 }
 
 func wantCode(t *testing.T, err error, want exitcode.Code) *exitcode.Error {
@@ -126,35 +83,39 @@ func wantReason(err error) exitcode.Reason {
 
 func TestNewRequiresKubeconfig(t *testing.T) {
 	_, err := New(Options{})
-	e := wantCode(t, err, exitcode.Config)
-	if e.Reason != exitcode.KubeconfigMissing {
-		t.Fatalf("reason = %s, want %s", e.Reason, exitcode.KubeconfigMissing)
+	if reason := wantCode(t, err, exitcode.Config).Reason; reason != exitcode.KubeconfigMissing {
+		t.Fatalf("reason = %s, want %s", reason, exitcode.KubeconfigMissing)
 	}
 }
 
 func TestNewReportsMissingFile(t *testing.T) {
 	_, err := New(Options{Kubeconfig: filepath.Join(t.TempDir(), "absent")})
-	e := wantCode(t, err, exitcode.Config)
-	if e.Reason != exitcode.KubeconfigMissing {
-		t.Fatalf("reason = %s", e.Reason)
+	if reason := wantCode(t, err, exitcode.Config).Reason; reason != exitcode.KubeconfigMissing {
+		t.Fatalf("reason = %s", reason)
 	}
 }
 
 func TestNewRefusesExecAuthAndNeverRunsIt(t *testing.T) {
+	server, err := fakecluster.New(fakecluster.Options{})
+	if err != nil {
+		t.Fatalf("fake cluster: %v", err)
+	}
+	t.Cleanup(server.Close)
 	marker := filepath.Join(t.TempDir(), "exec-ran")
-	path := writeKubeconfig(t, clusterSpec{
-		server: "https://192.0.2.10",
-		mutate: func(cfg *clientcmdapi.Config) {
-			cfg.AuthInfos["user"] = &clientcmdapi.AuthInfo{
-				Exec: &clientcmdapi.ExecConfig{
-					APIVersion: "client.authentication.k8s.io/v1",
-					Command:    "/bin/sh",
-					Args:       []string{"-c", "touch " + marker},
-				},
-			}
-		},
-	})
-	_, err := New(Options{Kubeconfig: path})
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	if _, err := server.Kubeconfig(path, func(config *clientcmdapi.Config) {
+		config.AuthInfos["user"] = &clientcmdapi.AuthInfo{
+			Exec: &clientcmdapi.ExecConfig{
+				APIVersion: "client.authentication.k8s.io/v1",
+				Command:    "/bin/sh",
+				Args:       []string{"-c", "touch " + marker},
+			},
+		}
+	}); err != nil {
+		t.Fatalf("kubeconfig: %v", err)
+	}
+
+	_, err = New(Options{Kubeconfig: path})
 	if !errors.Is(err, exitcode.ErrExecAuth) {
 		t.Fatalf("err = %v, want the exec refusal", err)
 	}
@@ -162,16 +123,16 @@ func TestNewRefusesExecAuthAndNeverRunsIt(t *testing.T) {
 	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
 		t.Fatalf("the exec plugin ran: marker exists (stat err %v)", statErr)
 	}
+	if connections := server.Connections(); connections != 0 {
+		t.Fatalf("a refused kubeconfig opened %d connection(s)", connections)
+	}
 }
 
 func TestNewRefusesAuthProvider(t *testing.T) {
-	path := writeKubeconfig(t, clusterSpec{
-		server: "https://192.0.2.10",
-		mutate: func(cfg *clientcmdapi.Config) {
-			cfg.AuthInfos["user"] = &clientcmdapi.AuthInfo{
-				AuthProvider: &clientcmdapi.AuthProviderConfig{Name: "oidc"},
-			}
-		},
+	path := writeKubeconfigFile(t, func(config *clientcmdapi.Config) {
+		config.AuthInfos["user"] = &clientcmdapi.AuthInfo{
+			AuthProvider: &clientcmdapi.AuthProviderConfig{Name: "oidc"},
+		}
 	})
 	_, err := New(Options{Kubeconfig: path})
 	if !errors.Is(err, exitcode.ErrAuthProvider) {
@@ -181,11 +142,8 @@ func TestNewRefusesAuthProvider(t *testing.T) {
 }
 
 func TestNewRefusesInsecureTLS(t *testing.T) {
-	path := writeKubeconfig(t, clusterSpec{
-		server: "https://192.0.2.10",
-		mutate: func(cfg *clientcmdapi.Config) {
-			cfg.Clusters["cluster"].InsecureSkipTLSVerify = true
-		},
+	path := writeKubeconfigFile(t, func(config *clientcmdapi.Config) {
+		config.Clusters["cluster"].InsecureSkipTLSVerify = true
 	})
 	_, err := New(Options{Kubeconfig: path})
 	if !errors.Is(err, exitcode.ErrInsecureTLS) {
@@ -195,34 +153,37 @@ func TestNewRefusesInsecureTLS(t *testing.T) {
 }
 
 func TestNewRefusesProxyURL(t *testing.T) {
-	path := writeKubeconfig(t, clusterSpec{
-		server: "https://192.0.2.10",
-		mutate: func(cfg *clientcmdapi.Config) {
-			cfg.Clusters["cluster"].ProxyURL = "https://203.0.113.9:8443"
-		},
+	path := writeKubeconfigFile(t, func(config *clientcmdapi.Config) {
+		config.Clusters["cluster"].ProxyURL = "https://proxy.invalid:8443"
 	})
 	_, err := New(Options{Kubeconfig: path})
 	e := wantCode(t, err, exitcode.Config)
 	if e.Reason != exitcode.KubeconfigInvalid {
 		t.Fatalf("reason = %s", e.Reason)
 	}
-	if strings.Contains(e.Message, "203.0.113.9") {
+	if strings.Contains(e.Message, "proxy.invalid") {
 		t.Fatalf("message leaks the proxy address: %q", e.Message)
 	}
 }
 
 func TestNewRefusesPlaintextServer(t *testing.T) {
-	path := writeKubeconfig(t, clusterSpec{server: "http://192.0.2.10"})
+	path := writeBareKubeconfig(t, "http://apiserver.invalid", nil)
 	_, err := New(Options{Kubeconfig: path})
-	e := wantCode(t, err, exitcode.Config)
-	if e.Reason != exitcode.KubeconfigInvalid {
-		t.Fatalf("reason = %s", e.Reason)
+	if reason := wantCode(t, err, exitcode.Config).Reason; reason != exitcode.KubeconfigInvalid {
+		t.Fatalf("reason = %s", reason)
 	}
 }
 
 func TestEnvKubeconfigNeedsOptIn(t *testing.T) {
-	srv, ca := tlsCluster(t, readyzHandler("ok\n"))
-	path := writeKubeconfig(t, clusterSpec{server: srv.URL, ca: ca})
+	server, err := fakecluster.New(fakecluster.Options{})
+	if err != nil {
+		t.Fatalf("fake cluster: %v", err)
+	}
+	t.Cleanup(server.Close)
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	if _, err := server.Kubeconfig(path, nil); err != nil {
+		t.Fatalf("kubeconfig: %v", err)
+	}
 	t.Setenv("KUBECONFIG", path)
 
 	if _, err := New(Options{}); wantReason(err) != exitcode.KubeconfigMissing {
@@ -234,43 +195,34 @@ func TestEnvKubeconfigNeedsOptIn(t *testing.T) {
 }
 
 func TestNewListsAvailableContexts(t *testing.T) {
-	path := writeKubeconfig(t, clusterSpec{server: "https://192.0.2.10", context: "present"})
+	path := writeKubeconfigFile(t, func(config *clientcmdapi.Config) {
+		config.Contexts["lab-two"] = &clientcmdapi.Context{Cluster: "cluster", AuthInfo: "user"}
+	})
 	_, err := New(Options{Kubeconfig: path, Context: "absent"})
 	e := wantCode(t, err, exitcode.Config)
-	if len(e.Available) != 1 || e.Available[0] != "present" {
+	if len(e.Available) != 2 || e.Available[0] != "lab-one" || e.Available[1] != "lab-two" {
 		t.Fatalf("available = %v", e.Available)
 	}
-	if strings.Contains(e.Message, "present") {
+	if strings.Contains(e.Message, "lab-one") {
 		t.Fatalf("context names belong in Available, not in the printable message: %q", e.Message)
 	}
 }
 
 func TestRefusalMessagesCarryNoLocation(t *testing.T) {
-	const server = "https://192.0.2.10"
-	// The kubeconfig path below a directory whose name would be an obvious tell.
-	dir := filepath.Join(t.TempDir(), "private-marker")
+	const server = "https://apiserver.invalid"
+	dir := filepath.Join(t.TempDir(), "secret-dir")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	path := filepath.Join(dir, "kubeconfig")
-	cfg := clientcmdapi.Config{
-		Clusters: map[string]*clientcmdapi.Cluster{
-			"cluster": {Server: server, InsecureSkipTLSVerify: true},
-		},
-		AuthInfos: map[string]*clientcmdapi.AuthInfo{
-			"user": {AuthProvider: &clientcmdapi.AuthProviderConfig{Name: "gcp"}},
-		},
-		Contexts: map[string]*clientcmdapi.Context{
-			"synthetic": {Cluster: "cluster", AuthInfo: "user"},
-		},
-		CurrentContext: "synthetic",
-	}
-	if err := clientcmd.WriteToFile(cfg, path); err != nil {
-		t.Fatalf("write kubeconfig: %v", err)
-	}
+	path := writeKubeconfigAt(t, filepath.Join(dir, "kubeconfig"), func(config *clientcmdapi.Config) {
+		config.Clusters["cluster"] = &clientcmdapi.Cluster{Server: server, InsecureSkipTLSVerify: true}
+		config.AuthInfos["user"] = &clientcmdapi.AuthInfo{
+			AuthProvider: &clientcmdapi.AuthProviderConfig{Name: "gcp"},
+		}
+	})
 	_, err := New(Options{Kubeconfig: path})
 	e := wantCode(t, err, exitcode.Config)
-	for _, secret := range []string{"192.0.2.10", "private-marker"} {
+	for _, secret := range []string{"apiserver.invalid", "secret-dir"} {
 		if strings.Contains(e.Message, secret) {
 			t.Fatalf("message leaks %q: %q", secret, e.Message)
 		}
@@ -278,54 +230,72 @@ func TestRefusalMessagesCarryNoLocation(t *testing.T) {
 }
 
 func TestNewAcceptsTokenAndClientCertificate(t *testing.T) {
-	srv, ca := tlsCluster(t, readyzHandler("ok\n"))
+	server, err := fakecluster.New(fakecluster.Options{})
+	if err != nil {
+		t.Fatalf("fake cluster: %v", err)
+	}
+	t.Cleanup(server.Close)
 	tokenPath := filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(tokenPath, []byte("synthetic-token"), 0o600); err != nil {
 		t.Fatalf("write token file: %v", err)
 	}
-	withToken := writeKubeconfig(t, clusterSpec{
-		server: srv.URL,
-		ca:     ca,
-		mutate: func(cfg *clientcmdapi.Config) {
-			cfg.AuthInfos["user"] = &clientcmdapi.AuthInfo{TokenFile: tokenPath}
-		},
-	})
+	withToken := filepath.Join(t.TempDir(), "kubeconfig")
+	if _, err := server.Kubeconfig(withToken, func(config *clientcmdapi.Config) {
+		config.AuthInfos["user"] = &clientcmdapi.AuthInfo{TokenFile: tokenPath}
+	}); err != nil {
+		t.Fatalf("kubeconfig: %v", err)
+	}
 	if _, err := New(Options{Kubeconfig: withToken}); err != nil {
 		t.Fatalf("tokenFile load failed: %v", err)
 	}
 
-	certPEM, keyPEM := selfSignedPair(t)
-	withCert := writeKubeconfig(t, clusterSpec{
-		server: srv.URL,
-		ca:     ca,
-		mutate: func(cfg *clientcmdapi.Config) {
-			cfg.AuthInfos["user"] = &clientcmdapi.AuthInfo{
-				ClientCertificateData: certPEM,
-				ClientKeyData:         keyPEM,
-			}
-		},
-	})
+	certPEM, keyPEM, err := fakecluster.NewClientCert()
+	if err != nil {
+		t.Fatalf("client certificate: %v", err)
+	}
+	withCert := filepath.Join(t.TempDir(), "kubeconfig")
+	if _, err := server.Kubeconfig(withCert, func(config *clientcmdapi.Config) {
+		config.AuthInfos["user"] = &clientcmdapi.AuthInfo{
+			ClientCertificateData: certPEM,
+			ClientKeyData:         keyPEM,
+		}
+	}); err != nil {
+		t.Fatalf("kubeconfig: %v", err)
+	}
 	if _, err := New(Options{Kubeconfig: withCert}); err != nil {
 		t.Fatalf("client certificate load failed: %v", err)
 	}
 }
 
 func TestAliasComesFromFlagOrContext(t *testing.T) {
-	srv, ca := tlsCluster(t, readyzHandler("ok\n"))
+	server, err := fakecluster.New(fakecluster.Options{})
+	if err != nil {
+		t.Fatalf("fake cluster: %v", err)
+	}
+	t.Cleanup(server.Close)
+
 	cases := []struct {
 		name    string
 		context string
 		cluster string
 		want    string
 	}{
-		{"flag wins", "synthetic", "lab", "lab"},
-		{"valid context", "lab", "", "lab"},
-		{"context with a host drops to unnamed", "admin@192.0.2.10", "", report.UnnamedAlias},
-		{"flag skips an invalid context", "admin@192.0.2.10", "edge", "edge"},
+		{name: "flag wins", context: "lab-one", cluster: "lab-two", want: "lab-two"},
+		{name: "valid context", context: "lab-one", want: "lab-one"},
+		{name: "context with a host drops to unnamed", context: "admin@apiserver.invalid", want: report.UnnamedAlias},
+		{name: "flag skips an invalid context", context: "admin@apiserver.invalid", cluster: "lab-two", want: "lab-two"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			path := writeKubeconfig(t, clusterSpec{server: srv.URL, ca: ca, context: tc.context})
+			path := filepath.Join(t.TempDir(), "kubeconfig")
+			if _, err := server.Kubeconfig(path, func(config *clientcmdapi.Config) {
+				config.Contexts = map[string]*clientcmdapi.Context{
+					tc.context: {Cluster: "cluster", AuthInfo: "user"},
+				}
+				config.CurrentContext = tc.context
+			}); err != nil {
+				t.Fatalf("kubeconfig: %v", err)
+			}
 			client, err := New(Options{Kubeconfig: path, Cluster: tc.cluster})
 			if err != nil {
 				t.Fatalf("New: %v", err)
@@ -338,8 +308,15 @@ func TestAliasComesFromFlagOrContext(t *testing.T) {
 }
 
 func TestExpectedDefaultsToLight(t *testing.T) {
-	srv, ca := tlsCluster(t, readyzHandler("ok\n"))
-	path := writeKubeconfig(t, clusterSpec{server: srv.URL, ca: ca})
+	server, err := fakecluster.New(fakecluster.Options{})
+	if err != nil {
+		t.Fatalf("fake cluster: %v", err)
+	}
+	t.Cleanup(server.Close)
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	if _, err := server.Kubeconfig(path, nil); err != nil {
+		t.Fatalf("kubeconfig: %v", err)
+	}
 
 	client, err := New(Options{Kubeconfig: path})
 	if err != nil {
@@ -355,6 +332,21 @@ func TestExpectedDefaultsToLight(t *testing.T) {
 	if got := dark.Cluster().Expected; got != report.Dark {
 		t.Fatalf("expected = %q, want dark", got)
 	}
+	if timeout := client.timeout; timeout != DefaultTimeout {
+		t.Fatalf("timeout = %s, want %s", timeout, DefaultTimeout)
+	}
+	if timeout := mustClient(t, Options{Kubeconfig: path, Timeout: 3 * time.Second}).timeout; timeout != 3*time.Second {
+		t.Fatalf("timeout = %s, want 3s", timeout)
+	}
+}
+
+func mustClient(t *testing.T, o Options) *Client {
+	t.Helper()
+	client, err := New(o)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return client
 }
 
 func TestSplitPathList(t *testing.T) {
@@ -371,7 +363,7 @@ func FuzzKubeconfigLoad(f *testing.F) {
 	f.Add([]byte("apiVersion: v1\nkind: Config\n"))
 	f.Add([]byte("apiVersion: v1\nkind: Config\nusers:\n- name: u\n  user:\n    token: t\n"))
 	f.Add([]byte("apiVersion: v1\nkind: Config\nusers:\n- name: u\n  user:\n    exec:\n      command: /bin/sh\n"))
-	f.Add([]byte("apiVersion: v1\nkind: Config\nclusters:\n- name: c\n  cluster:\n    server: http://192.0.2.10\n"))
+	f.Add([]byte("apiVersion: v1\nkind: Config\nclusters:\n- name: c\n  cluster:\n    server: http://apiserver.invalid\n"))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		dir := t.TempDir()

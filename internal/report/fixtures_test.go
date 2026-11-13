@@ -21,6 +21,7 @@ var (
 	requiredValid = []string{
 		"green", "yellow", "red", "expected-dark",
 		"unobserved-auth", "unobserved-tls", "wait-timeout",
+		"yellow-unknown", "red-all-unknown", "wait-ready",
 	}
 	requiredInvalidKinds = 4
 )

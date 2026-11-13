@@ -113,6 +113,70 @@ func docUnobservedTLS() report.Document {
 	}
 }
 
+// docYellowUnknown mirrors yellow-unknown.json: readyz ok, one node whose
+// Ready condition has no verdict (Ready=Unknown).
+func docYellowUnknown() report.Document {
+	return report.Document{
+		Schema:      report.SchemaV0,
+		GeneratedAt: fxTS(),
+		Cluster:     report.Cluster{Alias: "lab-one", Expected: report.Light},
+		Server:      &report.Server{Version: "v1.34.0+h3s", Flavor: "h3s"},
+		Apiserver:   report.Apiserver{Result: report.Up, HTTPStatus: fxPtr(200), LatencyMS: fxPtr(int64(18))},
+		Readyz: &report.Readyz{Mode: report.ModeVerbose, OK: true, Checks: []report.Check{
+			{Name: "etcd", OK: true}, {Name: "ping", OK: true},
+		}},
+		Nodes: &report.Nodes{Total: 2, Ready: 1, Items: []report.Node{
+			{Name: "node-a", Ready: true},
+			{Name: "node-b", Ready: false, Reason: "KubeletNotReady", Unknown: true},
+		}},
+		Observed: true,
+		Severity: report.Yellow,
+		Reasons:  []exitcode.Reason{exitcode.NodeNotReady},
+	}
+}
+
+// docRedAllUnknown mirrors red-all-unknown.json: every node has no verdict,
+// so nothing is ready and the cluster is RED.
+func docRedAllUnknown() report.Document {
+	return report.Document{
+		Schema:      report.SchemaV0,
+		GeneratedAt: fxTS(),
+		Cluster:     report.Cluster{Alias: "lab-one", Expected: report.Light},
+		Server:      &report.Server{Version: "v1.34.0+h3s", Flavor: "h3s"},
+		Apiserver:   report.Apiserver{Result: report.Up, HTTPStatus: fxPtr(200), LatencyMS: fxPtr(int64(9))},
+		Readyz: &report.Readyz{Mode: report.ModeVerbose, OK: true, Checks: []report.Check{
+			{Name: "etcd", OK: true}, {Name: "ping", OK: true},
+		}},
+		Nodes: &report.Nodes{Total: 2, Ready: 0, Items: []report.Node{
+			{Name: "node-a", Ready: false, Reason: "KubeletNotReady", Unknown: true},
+			{Name: "node-b", Ready: false, Unknown: true},
+		}},
+		Observed: true,
+		Severity: report.Red,
+		Reasons:  []exitcode.Reason{exitcode.NodeNotReady},
+	}
+}
+
+// docWaitReady mirrors wait-ready.json: the final poll of a successful wait,
+// GREEN, with the wait block summarising the run.
+func docWaitReady() report.Document {
+	return report.Document{
+		Schema:      report.SchemaV0,
+		GeneratedAt: fxTS(),
+		Cluster:     report.Cluster{Alias: "lab-one", Expected: report.Light},
+		Server:      &report.Server{Version: "v1.34.0+h3s", Flavor: "h3s"},
+		Apiserver:   report.Apiserver{Result: report.Up, HTTPStatus: fxPtr(200), LatencyMS: fxPtr(int64(12))},
+		Readyz: &report.Readyz{Mode: report.ModeVerbose, OK: true, Checks: []report.Check{
+			{Name: "etcd", OK: true}, {Name: "ping", OK: true},
+		}},
+		Nodes:    &report.Nodes{Total: 1, Ready: 1, Items: []report.Node{{Name: "node-a", Ready: true}}},
+		Observed: true,
+		Severity: report.Green,
+		Reasons:  []exitcode.Reason{},
+		Wait:     &report.Wait{Outcome: report.WaitReady, Polls: 3, ElapsedMS: 1800},
+	}
+}
+
 func docWaitTimeout() report.Document {
 	return report.Document{
 		Schema:      report.SchemaV0,
@@ -125,7 +189,7 @@ func docWaitTimeout() report.Document {
 		Observed:    true,
 		Severity:    report.Red,
 		Reasons:     []exitcode.Reason{exitcode.Timeout, exitcode.ReadyzFailed},
-		Wait:        &report.Wait{Outcome: report.WaitTimeout, Polls: 4, ElapsedMS: 61500},
+		Wait:        &report.Wait{Outcome: report.WaitTimeout, Polls: 5, ElapsedMS: 60000},
 	}
 }
 
@@ -212,7 +276,51 @@ nodes:      1 of 1 ready
             ready     node-a
 severity:   RED
 reasons:    timeout, readyz_failed
-wait:       timeout after 4 polls (1m1.5s)`,
+wait:       timed out after 5 polls, 60.0s`,
+		},
+		{
+			"yellow unknown", docYellowUnknown(),
+			`cluster:    lab-one (expected light)
+as of:      2026-11-13T20:00:00Z
+server:     v1.34.0+h3s (h3s)
+apiserver:  up, http 200, 18ms
+readyz:     verbose, ok
+            ok    etcd
+            ok    ping
+nodes:      1 of 2 ready
+            ready     node-a
+            UNKNOWN   node-b (KubeletNotReady)
+severity:   YELLOW
+reasons:    node_not_ready`,
+		},
+		{
+			"red all unknown", docRedAllUnknown(),
+			`cluster:    lab-one (expected light)
+as of:      2026-11-13T20:00:00Z
+server:     v1.34.0+h3s (h3s)
+apiserver:  up, http 200, 9ms
+readyz:     verbose, ok
+            ok    etcd
+            ok    ping
+nodes:      0 of 2 ready
+            UNKNOWN   node-a (KubeletNotReady)
+            UNKNOWN   node-b
+severity:   RED
+reasons:    node_not_ready`,
+		},
+		{
+			"wait ready", docWaitReady(),
+			`cluster:    lab-one (expected light)
+as of:      2026-11-13T20:00:00Z
+server:     v1.34.0+h3s (h3s)
+apiserver:  up, http 200, 12ms
+readyz:     verbose, ok
+            ok    etcd
+            ok    ping
+nodes:      1 of 1 ready
+            ready     node-a
+severity:   GREEN
+wait:       ready after 3 polls, 1.8s`,
 		},
 		{
 			"minimal unobserved, no error body",
@@ -256,9 +364,14 @@ func TestRenderDecoration(t *testing.T) {
 	if got := report.Render(d3); !strings.Contains(got, "ready     node-a (network unavailable)") {
 		t.Errorf("network unavailable annotation missing:\n%s", got)
 	}
+	d3.Nodes.Items = []report.Node{{Name: "node-a", Ready: false, Unknown: true,
+		Reason: "KubeletNotReady", NetworkUnavailable: true}}
+	if got := report.Render(d3); !strings.Contains(got, "UNKNOWN   node-a (KubeletNotReady, network unavailable)") {
+		t.Errorf("unknown node annotation missing:\n%s", got)
+	}
 	d4 := docWaitTimeout()
 	d4.Wait = &report.Wait{Outcome: report.WaitReady, Polls: 3, ElapsedMS: 1800}
-	if got := report.Render(d4); !strings.Contains(got, "wait:       ready after 3 polls (1.8s)") {
+	if got := report.Render(d4); !strings.Contains(got, "wait:       ready after 3 polls, 1.8s") {
 		t.Errorf("ready wait row missing:\n%s", got)
 	}
 }
@@ -274,7 +387,10 @@ func TestRenderFixtures(t *testing.T) {
 		"expected-dark.json":   "apiserver:  down, expected dark",
 		"unobserved-auth.json": "error:      auth_rejected: server rejected the credentials",
 		"unobserved-tls.json":  "error:      tls_verify_failed",
-		"wait-timeout.json":    "wait:       timeout after 4 polls (1m1.5s)",
+		"wait-timeout.json":    "wait:       timed out after 5 polls, 60.0s",
+		"yellow-unknown.json":  "UNKNOWN   node-b (KubeletNotReady)",
+		"red-all-unknown.json": "nodes:      0 of 2 ready",
+		"wait-ready.json":      "wait:       ready after 3 polls, 1.8s",
 	}
 	render := func(path string) (string, error) {
 		b, err := os.ReadFile(path)

@@ -163,7 +163,16 @@ func (c *Client) nodes(ctx context.Context) (*report.Nodes, *exitcode.Error) {
 		for _, condition := range item.Status.Conditions {
 			switch condition.Type {
 			case corev1.NodeReady:
-				node.Ready = condition.Status == corev1.ConditionTrue
+				// Unknown is its own verdict: the node has stopped reporting, so it
+				// is not ready, but it has not failed either.
+				switch condition.Status {
+				case corev1.ConditionTrue:
+					node.Ready = true
+				case corev1.ConditionUnknown:
+					node.Unknown = true
+				case corev1.ConditionFalse:
+				default:
+				}
 				node.Reason = clampString(condition.Reason, report.MaxReasonLen)
 			case corev1.NodeNetworkUnavailable:
 				node.NetworkUnavailable = node.NetworkUnavailable || condition.Status == corev1.ConditionTrue

@@ -24,6 +24,7 @@ linters:
           list-mode: lax
           files:
             - $all
+            - "!**/cmd/scry/process_test.go"
           deny:
             - pkg: os/exec
               desc: Scry never runs other programs; exec auth is refused (tripwire, see docs/versions.md)

@@ -31,9 +31,10 @@ func full() report.Document {
 		Readyz: &report.Readyz{Mode: report.ModeVerbose, OK: false, Checks: []report.Check{
 			{Name: "etcd", OK: false, Message: "failed"}, {Name: "ping", OK: true},
 		}},
-		Nodes: &report.Nodes{Total: 2, Ready: 1, Items: []report.Node{
+		Nodes: &report.Nodes{Total: 3, Ready: 1, Items: []report.Node{
 			{Name: "node-a", Ready: true},
 			{Name: "node-b", Ready: false, Reason: "RuntimeNotReady", NetworkUnavailable: true},
+			{Name: "node-c", Ready: false, Reason: "NodeStatusUnknown", Unknown: true},
 		}},
 		Observed: true,
 		Severity: report.Yellow,

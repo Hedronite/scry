@@ -126,6 +126,7 @@ type Node struct {
 	Ready              bool   `json:"ready"`
 	Reason             string `json:"reason,omitempty"`
 	NetworkUnavailable bool   `json:"network_unavailable,omitempty"`
+	Unknown            bool   `json:"unknown,omitempty"` // Ready=Unknown: no verdict; Ready is false
 }
 
 // Nodes summarises LIST /api/v1/nodes.

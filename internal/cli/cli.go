@@ -4,7 +4,7 @@
 package cli
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"io"
 
@@ -27,7 +27,7 @@ type Streams struct {
 func Execute(args []string, s Streams) int {
 	root := NewRoot(s)
 	root.SetArgs(args)
-	err := root.Execute()
+	err := root.ExecuteContext(context.Background())
 	if err == nil {
 		return int(exitcode.Green)
 	}
@@ -105,10 +105,4 @@ func (c *Common) Validate() error {
 		return usage("--cluster must match %s", report.AliasPattern)
 	}
 	return nil
-}
-
-var errNotImplemented = errors.New("not implemented")
-
-func notImplemented(what string) error {
-	return exitcode.Wrap(exitcode.InternalError, errNotImplemented, "%s is not implemented yet (K1)", what)
 }

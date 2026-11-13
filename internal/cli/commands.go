@@ -21,7 +21,7 @@ var (
 	commit  = ""
 )
 
-func newStatus(_ Streams) *cobra.Command {
+func newStatus(s Streams) *cobra.Command {
 	var c Common
 	cmd := &cobra.Command{
 		Use:     "status",
@@ -29,18 +29,15 @@ func newStatus(_ Streams) *cobra.Command {
 		Long:    statusLong,
 		Example: statusExample,
 		Args:    cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			if err := c.Validate(); err != nil {
-				return err
-			}
-			return notImplemented("status")
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runStatus(cmd.Context(), s, &c)
 		},
 	}
 	c.bind(cmd)
 	return cmd
 }
 
-func newWait(_ Streams) *cobra.Command {
+func newWait(s Streams) *cobra.Command {
 	var (
 		c       Common
 		forWhat string
@@ -52,17 +49,8 @@ func newWait(_ Streams) *cobra.Command {
 		Long:    waitLong,
 		Example: waitExample,
 		Args:    cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			if err := c.Validate(); err != nil {
-				return err
-			}
-			if forWhat != "readyz" {
-				return usage("--for must be \"readyz\"")
-			}
-			if timeout <= 0 {
-				return usage("--timeout must be positive")
-			}
-			return notImplemented("wait")
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runWait(cmd.Context(), s, &c, forWhat, timeout)
 		},
 	}
 	c.bind(cmd)

@@ -80,7 +80,8 @@
               "name": { "type": "string", "minLength": 1, "maxLength": 253 },
               "ready": { "type": "boolean" },
               "reason": { "type": "string", "maxLength": 120 },
-              "network_unavailable": { "type": "boolean" }
+              "network_unavailable": { "type": "boolean" },
+              "unknown": { "type": "boolean" }
             }
           }
         }
