@@ -26,7 +26,7 @@ A cluster declared --expected dark is GREEN (exit 0) when unreachable: dark on p
 
 Cluster selection: --config with --cluster picks that cluster's entry (kubeconfig path, expected state, timeout); with one entry in the file, --cluster can be omitted; flags always beat the entry. --cluster without --config only overrides the report's alias.
 
-Output: table by default, scry.status/v0 JSON with --json, nothing with --quiet. Exit codes for an observed cluster: 0 GREEN (including expected dark), 1 YELLOW, 2 RED. Without a document: 3 config, 4 auth, 5 TLS, 6 transport, 7 internal.`
+Output: table by default, scry.status/v0 JSON with --json, nothing with --quiet. With --out PATH the full JSON document is also written to PATH (temp file in the same directory, fsync, atomic rename, mode 0644) on exits 0, 1, 2, 4, 5 and 6, never on 3, 7 or 8; a failed write exits 3 with reason out_write_failed. See docs/vigil.md. Exit codes for an observed cluster: 0 GREEN (including expected dark), 1 YELLOW, 2 RED. Without a document: 3 config, 4 auth, 5 TLS, 6 transport, 7 internal.`
 
 	statusExample = `  # report on a cluster (table)
   scry status --kubeconfig ./lab-one.kubeconfig
@@ -38,7 +38,10 @@ Output: table by default, scry.status/v0 JSON with --json, nothing with --quiet.
   scry status --config ./scry.toml --cluster lab-one
 
   # a cluster that is intentionally unreachable: GREEN, exit 0
-  scry status --kubeconfig ./lab-one.kubeconfig --expected dark`
+  scry status --kubeconfig ./lab-one.kubeconfig --expected dark
+
+  # publish the document atomically for Vigil (a timer runs this)
+  scry status --json --config ./scry.toml --out ./status.json`
 
 	waitShort = "Poll until the cluster is ready or the timeout passes"
 
@@ -53,7 +56,7 @@ There are no watches and no long-lived connections. An interrupt (Ctrl-C) ends t
 	waitExample = `  # wait up to 2 minutes for the cluster to come up
   scry wait --for=readyz --kubeconfig ./lab-one.kubeconfig --timeout 2m
 
-  # wait on a saved entry; the entry's timeout applies unless overridden
+  # wait on a saved entry (the entry's timeout limits each request)
   scry wait --config ./scry.toml --cluster lab-one
 
   # gate a script on readiness without printing anything
@@ -67,10 +70,11 @@ There are no watches and no long-lived connections. An interrupt (Ctrl-C) ends t
 	flagCluster    = "cluster alias for the report (a-z, 0-9, '-', up to 32 characters); with --config selects that cluster's entry, without it overrides the alias"
 	flagExpected   = "declare the apiserver expected to be \"dark\" or \"light\" (default light; beats the config entry)"
 	flagConfig     = "path to a scry.config/v0 file; with --cluster selects that cluster's entry"
+	flagOut        = "also write the full scry.status/v0 JSON document to this file (temp file in the same directory, fsync, atomic rename, mode 0644); written on exits 0, 1, 2, 4, 5 and 6, never on 3, 7 or 8; if the write fails: exit 3, reason out_write_failed"
 	flagJSON       = "print the scry.status/v0 document as JSON"
 	flagQuiet      = "print nothing; the exit code is the answer (silences stdout and stderr; usage errors still print one line)"
 	flagFor        = "what to wait for; only \"readyz\" is supported"
-	flagTimeout    = "give up after this long (default 60s; beats the timeout in the config entry)"
+	flagTimeout    = "give up after this long, for the whole run (default 60s; the config entry's timeout is per request)"
 
 	flagVersionJSON = "print scry.version/v0 as JSON"
 )

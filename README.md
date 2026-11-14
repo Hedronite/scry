@@ -4,7 +4,7 @@ Scry is a small, inspect-only command-line tool that answers one question about 
 
 It is a companion to [hedronetes-h3s](https://github.com/VirtualMachinist/hedronetes-h3s) and works against stock Kubernetes too. It is not an operator or a control plane: it reads and reports, and it is built so it cannot write.
 
-> **Status:** alpha. The contract — the `scry.status/v0` document, the exit codes, and the request allowlist — is frozen. `scry status` and `scry wait` observe a real cluster; the Vigil export and signed releases come later.
+> **Status:** alpha. The contract — the `scry.status/v0` document, the exit codes, and the request allowlist — is frozen. `scry status` and `scry wait` observe a real cluster; `scry status --out` writes the file Vigil reads; signed releases come later.
 
 ## What Scry does
 
@@ -96,6 +96,10 @@ When Scry cannot get a verdict from the wire — a config problem, refused crede
 | 7    | internal error (including an allowlist refusal)      |
 | 8    | usage: bad flags; no document is emitted             |
 
+## Exporting to Vigil
+
+`scry status --out PATH` also writes the full `scry.status/v0` document to `PATH` (temp file in the same directory, fsync, atomic rename, mode `0644`), whatever stdout shows. A timer runs it every minute and [Vigil](https://github.com/Hedronite/vigil) reads the file; Vigil never runs Scry or holds a kubeconfig. The file is written on exits 0, 1, 2, 4, 5 and 6, never on 3, 7 or 8 (the last file stays and Vigil ages it into stale); a failed write is exit 3, reason `out_write_failed`. One file feeds Vigil one cluster today. See [docs/vigil.md](docs/vigil.md) for the mapping to Vigil's `scry{}` block, and [docs/examples](docs/examples) for systemd and launchd timers.
+
 ## Waiting
 
 `scry wait --for=readyz` polls until ready or `--timeout` (default `60s`) expires. Every poll observes the cluster once, with each connection closed after use so a rotated certificate is picked up on the next poll. The schedule is bounded backoff: 500ms growing 1.5x to a 5s cap, no jitter.
@@ -126,7 +130,7 @@ expected = "dark"
 timeout = "2m"
 ```
 
-Resolution: `--config` with `--cluster` selects that cluster's entry (kubeconfig path, expected state, wait timeout). With exactly one entry in the file, `--cluster` can be omitted; several entries without `--cluster` are refused, listing the aliases. Flags always beat the entry: `--kubeconfig`, `--expected` and `--timeout` override whatever the file says. `--cluster` without `--config` only overrides the report's alias.
+Resolution: `--config` with `--cluster` selects that cluster's entry (kubeconfig path, expected state, per-request timeout). With exactly one entry in the file, `--cluster` can be omitted; several entries without `--cluster` are refused, listing the aliases. Flags always beat the entry: `--kubeconfig` and `--expected` override whatever the file says. The entry's `timeout` limits each request; `wait --timeout` limits the whole run and has no config equivalent. `--cluster` without `--config` only overrides the report's alias.
 
 ## Building from source
 

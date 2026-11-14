@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -62,6 +63,8 @@ type result struct {
 	stdout string
 	stderr string
 	args   []string
+	dir    string // the working directory the process ran in
+	tmpdir string // the TMPDIR the process was given
 }
 
 func (r result) String() string {
@@ -87,12 +90,14 @@ func run(t *testing.T, env []string, args ...string) result {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
+	dir := t.TempDir()
+	tmpdir := t.TempDir()
 	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Dir = t.TempDir()
+	cmd.Dir = dir
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + t.TempDir(),
-		"TMPDIR=" + t.TempDir(),
+		"TMPDIR=" + tmpdir,
 	}
 	cmd.Env = append(cmd.Env, env...)
 
@@ -103,7 +108,13 @@ func run(t *testing.T, env []string, args ...string) result {
 	if ctx.Err() != nil {
 		t.Fatalf("scry %s timed out: %v", strings.Join(args, " "), ctx.Err())
 	}
-	res := result{stdout: stdout.String(), stderr: stderr.String(), args: append([]string(nil), args...)}
+	res := result{
+		stdout: stdout.String(),
+		stderr: stderr.String(),
+		args:   append([]string(nil), args...),
+		dir:    dir,
+		tmpdir: tmpdir,
+	}
 	var exitErr *exec.ExitError
 	switch {
 	case err == nil:
@@ -920,5 +931,343 @@ func TestHelp(t *testing.T) {
 		if !strings.Contains(res.stdout, "Usage:") {
 			t.Fatalf("%s --help lacks a usage block\n%s", cmd, res)
 		}
+	}
+}
+
+// --- K2: status --out, the Vigil file export --------------------------------
+
+// outPath returns a path inside a fresh directory the test owns.
+func outPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "status.json")
+}
+
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return body
+}
+
+func dirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir %s: %v", dir, err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+// wantNoLeftovers asserts the target directory holds only the exported file:
+// the temp file must not survive a success.
+func wantNoLeftovers(t *testing.T, dir, target string) {
+	t.Helper()
+	names := dirNames(t, dir)
+	if len(names) != 1 || names[0] != target {
+		t.Fatalf("directory %s holds %v, want only %q", dir, names, target)
+	}
+}
+
+// wantOutDocument asserts the exported file is the full document, with the
+// mode the contract fixes.
+func wantOutDocument(t *testing.T, path string, mode os.FileMode) map[string]any {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if info.Mode().Perm() != mode {
+		t.Fatalf("%s mode = %v, want %v", path, info.Mode().Perm(), mode)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(readFile(t, path), &doc); err != nil {
+		t.Fatalf("exported file is not one JSON document: %v", err)
+	}
+	if doc["schema"] != "scry.status/v0" {
+		t.Fatalf("exported schema = %v", doc["schema"])
+	}
+	return doc
+}
+
+// TestOutWrittenOnObservedExits is R4's observed half: the file appears when a
+// verdict was reached, and it is byte-identical to the --json document.
+func TestOutWrittenOnObservedExits(t *testing.T) {
+	cases := []struct {
+		name     string
+		opts     fakecluster.Options
+		severity string
+		exit     int
+	}{
+		{"green", fakecluster.Options{}, "GREEN", 0},
+		{
+			"yellow",
+			fakecluster.Options{Nodes: fakecluster.Reply{Body: fakecluster.NodeList(
+				fakecluster.Node{Name: "node-a", Ready: "True", Reason: "KubeletReady"},
+				fakecluster.Node{Name: "node-b", Ready: "False", Reason: "KubeletNotReady"},
+			)}},
+			"YELLOW", 1,
+		},
+		{"red", fakecluster.Options{Readyz: fakecluster.Reply{Status: 500}}, "RED", 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newFake(t, tc.opts)
+			kc := kubeconfig(t, srv, nil)
+			out := outPath(t)
+			res := wantExit(t, run(t, nil, "status", "--json", "--out", out, "--kubeconfig", kc), tc.exit)
+
+			doc := wantOutDocument(t, out, 0o644)
+			wantField(t, doc, true, "observed")
+			wantField(t, doc, tc.severity, "severity")
+			if string(readFile(t, out)) != res.stdout {
+				t.Fatalf("exported file differs from --json stdout\nfile: %s\nstdout: %s", quote(string(readFile(t, out))), quote(res.stdout))
+			}
+			wantNoLeftovers(t, filepath.Dir(out), filepath.Base(out))
+			wantCleanWire(t, srv)
+		})
+	}
+}
+
+// TestOutWrittenOnUnobservedExits is R4's unobserved half: the document is
+// still written, without a severity.
+func TestOutWrittenOnUnobservedExits(t *testing.T) {
+	t.Run("auth", func(t *testing.T) {
+		srv := newFake(t, fakecluster.Options{Handle: func(w http.ResponseWriter, r *http.Request) bool {
+			if r.URL.Path == fakecluster.ReadyzPath {
+				w.WriteHeader(401)
+				return true
+			}
+			return false
+		}})
+		kc := kubeconfig(t, srv, nil)
+		out := outPath(t)
+		wantExit(t, run(t, nil, "status", "--json", "--out", out, "--kubeconfig", kc), 4)
+		doc := wantOutDocument(t, out, 0o644)
+		wantField(t, doc, false, "observed")
+		wantField(t, doc, "auth_rejected", "error", "code")
+		if _, ok := doc["severity"]; ok {
+			t.Fatalf("unobserved export carries a severity: %v", doc["severity"])
+		}
+		wantNoLeftovers(t, filepath.Dir(out), filepath.Base(out))
+	})
+
+	t.Run("tls", func(t *testing.T) {
+		stranger := newFake(t, fakecluster.Options{})
+		srv := newFake(t, fakecluster.Options{})
+		kc := kubeconfig(t, srv, func(cfg *clientcmdapi.Config) {
+			cfg.Clusters["cluster"].CertificateAuthorityData = stranger.CAPEM()
+		})
+		out := outPath(t)
+		wantExit(t, run(t, nil, "status", "--json", "--out", out, "--kubeconfig", kc), 5)
+		doc := wantOutDocument(t, out, 0o644)
+		wantField(t, doc, false, "observed")
+		wantField(t, doc, "up", "apiserver", "result")
+		wantField(t, doc, "tls_verify_failed", "error", "code")
+		wantNoLeftovers(t, filepath.Dir(out), filepath.Base(out))
+	})
+
+	t.Run("transport", func(t *testing.T) {
+		srv := newFake(t, fakecluster.Options{Readyz: fakecluster.Reply{Hang: true}})
+		kc := kubeconfig(t, srv, nil)
+		cfg := writeConfig(t, "synthetic", kc, "light", "200ms")
+		out := outPath(t)
+		wantExit(t, run(t, nil, "status", "--json", "--out", out, "--config", cfg, "--cluster", "synthetic"), 6)
+		doc := wantOutDocument(t, out, 0o644)
+		wantField(t, doc, false, "observed")
+		wantField(t, doc, "http_unresponsive", "error", "code")
+		wantNoLeftovers(t, filepath.Dir(out), filepath.Base(out))
+	})
+}
+
+// TestOutUntouchedOnPreNetworkRefusal is R4: exit 3 never writes, and an older
+// file keeps its bytes.
+func TestOutUntouchedOnPreNetworkRefusal(t *testing.T) {
+	old := []byte(`{"schema":"scry.status/v0","sentinel":"unchanged"}`)
+
+	t.Run("existing file", func(t *testing.T) {
+		out := outPath(t)
+		if err := os.WriteFile(out, old, 0o644); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		wantExit(t, run(t, nil, "status", "--json", "--out", out), 3)
+		if got := readFile(t, out); !bytes.Equal(got, old) {
+			t.Fatalf("refusal rewrote the export: %q", got)
+		}
+		wantNoLeftovers(t, filepath.Dir(out), filepath.Base(out))
+	})
+
+	t.Run("no file", func(t *testing.T) {
+		out := outPath(t)
+		wantExit(t, run(t, nil, "status", "--json", "--out", out), 3)
+		if names := dirNames(t, filepath.Dir(out)); len(names) != 0 {
+			t.Fatalf("refusal created %v", names)
+		}
+	})
+}
+
+// TestOutWriteFailure is R5, and the deterministic proof that the temp file is
+// created in the target directory: with the directory unwritable and TMPDIR
+// writable, a TMPDIR-based writer would succeed.
+func TestOutWriteFailure(t *testing.T) {
+	srv := newFake(t, fakecluster.Options{})
+	kc := kubeconfig(t, srv, nil)
+
+	dir := t.TempDir()
+	out := filepath.Join(dir, "status.json")
+	if err := os.WriteFile(out, []byte("old, untouched"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	res := wantExit(t, run(t, nil, "status", "--json", "--out", out, "--kubeconfig", kc), 3)
+	if res.stderr != "scry: cannot write the --out file\n" {
+		t.Fatalf("stderr = %q, want exactly the frozen message", res.stderr)
+	}
+	doc := wantOneDocument(t, res)
+	wantField(t, doc, false, "observed")
+	wantField(t, doc, "unknown", "apiserver", "result")
+	wantField(t, doc, "out_write_failed", "error", "code")
+	if _, ok := doc["severity"]; ok {
+		t.Fatalf("write failure carries a severity: %v", doc["severity"])
+	}
+	if got := string(readFile(t, out)); got != "old, untouched" {
+		t.Fatalf("the old export was modified: %q", got)
+	}
+	if names := dirNames(t, dir); len(names) != 1 || names[0] != "status.json" {
+		t.Fatalf("write failure left %v", names)
+	}
+	if names := dirNames(t, res.tmpdir); len(names) != 0 {
+		t.Fatalf("write failure used TMPDIR for the temp file: %v", names)
+	}
+}
+
+// TestOutRequiresAPath pins the two usage rejections.
+func TestOutRequiresAPath(t *testing.T) {
+	for _, value := range []string{"", "-"} {
+		res := wantExit(t, run(t, nil, "status", "--out", value), 8)
+		if res.stdout != "" {
+			t.Fatalf("usage error wrote to stdout\n%s", res)
+		}
+		if names := dirNames(t, res.dir); len(names) != 0 {
+			t.Fatalf("--out %q wrote %v", value, names)
+		}
+	}
+}
+
+// TestOutMustNotAliasAnInput: exporting over the kubeconfig or the config file
+// would destroy the input, so it is a usage error.
+func TestOutMustNotAliasAnInput(t *testing.T) {
+	t.Run("kubeconfig", func(t *testing.T) {
+		srv := newFake(t, fakecluster.Options{})
+		kc := kubeconfig(t, srv, nil)
+		before := readFile(t, kc)
+		res := wantExit(t, run(t, nil, "status", "--out", kc, "--kubeconfig", kc), 8)
+		if res.stdout != "" {
+			t.Fatalf("usage error wrote to stdout\n%s", res)
+		}
+		if got := readFile(t, kc); !bytes.Equal(got, before) {
+			t.Fatalf("the kubeconfig was overwritten")
+		}
+	})
+
+	t.Run("config", func(t *testing.T) {
+		srv := newFake(t, fakecluster.Options{})
+		cfg := writeConfig(t, "synthetic", kubeconfig(t, srv, nil), "light", "5s")
+		before := readFile(t, cfg)
+		wantExit(t, run(t, nil, "status", "--out", cfg, "--config", cfg, "--cluster", "synthetic"), 8)
+		if got := readFile(t, cfg); !bytes.Equal(got, before) {
+			t.Fatalf("the config file was overwritten")
+		}
+	})
+}
+
+// TestOutRejectedOnWait is R1.
+func TestOutRejectedOnWait(t *testing.T) {
+	srv := newFake(t, fakecluster.Options{})
+	kc := kubeconfig(t, srv, nil)
+	out := outPath(t)
+	wantExit(t, run(t, nil, "wait", "--for", "readyz", "--out", out, "--kubeconfig", kc), 8)
+	if names := dirNames(t, filepath.Dir(out)); len(names) != 0 {
+		t.Fatalf("wait --out wrote %v", names)
+	}
+	if got := srv.Requests(); len(got) != 0 {
+		t.Fatalf("wait --out opened %d request(s)", len(got))
+	}
+}
+
+// TestOutQuietStillWrites: --quiet silences the streams, not the export.
+func TestOutQuietStillWrites(t *testing.T) {
+	srv := newFake(t, fakecluster.Options{})
+	kc := kubeconfig(t, srv, nil)
+	out := outPath(t)
+	wantSilent(t, wantExit(t, run(t, nil, "status", "--quiet", "--out", out, "--kubeconfig", kc), 0))
+	doc := wantOutDocument(t, out, 0o644)
+	wantField(t, doc, true, "observed")
+	wantField(t, doc, "GREEN", "severity")
+}
+
+// TestOutReplaceIsAtomic rewrites the export ten times while a reader loops over
+// it: every read must be a complete document, never empty and never partial.
+func TestOutReplaceIsAtomic(t *testing.T) {
+	srv := newFake(t, fakecluster.Options{})
+	kc := kubeconfig(t, srv, nil)
+	out := outPath(t)
+
+	wantExit(t, run(t, nil, "status", "--json", "--out", out, "--kubeconfig", kc), 0)
+
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		badRead []string
+		reads   int
+	)
+	stop := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			body, err := os.ReadFile(out)
+			if err != nil {
+				continue
+			}
+			mu.Lock()
+			reads++
+			switch {
+			case len(bytes.TrimSpace(body)) == 0:
+				badRead = append(badRead, "empty read")
+			case !json.Valid(body):
+				badRead = append(badRead, "partial read")
+			}
+			mu.Unlock()
+		}
+	}()
+
+	for i := 0; i < 10; i++ {
+		wantExit(t, run(t, nil, "status", "--json", "--out", out, "--kubeconfig", kc), 0)
+	}
+	close(stop)
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if reads == 0 {
+		t.Fatal("the reader never observed the export")
+	}
+	if len(badRead) > 0 {
+		t.Fatalf("non-atomic replace: %d of %d reads were %v", len(badRead), reads, badRead)
 	}
 }

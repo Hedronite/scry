@@ -53,6 +53,7 @@ const (
 	InsecureTLSRefused Reason = "insecure_tls_refused"
 	ConfigInvalid      Reason = "config_invalid"
 	AllowlistDenied    Reason = "allowlist_denied"
+	OutWriteFailed     Reason = "out_write_failed" // K2: the --out file could not be written
 	InternalError      Reason = "internal"
 )
 
@@ -70,6 +71,7 @@ var codes = map[Reason]Code{
 	TLSCertExpired:     TLS,
 	HTTPUnresponsive:   Transport,
 	AllowlistDenied:    Internal,
+	OutWriteFailed:     Config,
 	InternalError:      Internal,
 }
 
@@ -79,7 +81,7 @@ var all = []Reason{
 	NodeNotReady, NetworkUnavailable, Timeout, WaitExpectedDark, AuthRejected,
 	RBACDenied, TLSVerifyFailed, TLSCertExpired, KubeconfigMissing,
 	KubeconfigInvalid, ExecAuthRefused, AuthProviderRefuse, InsecureTLSRefused,
-	ConfigInvalid, AllowlistDenied, InternalError,
+	ConfigInvalid, AllowlistDenied, OutWriteFailed, InternalError,
 }
 
 // All returns every reason code, in schema order.

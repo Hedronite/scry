@@ -1,0 +1,319 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Hedronite/vigil/schema/vigil.summary.v0.schema.json",
+  "title": "vigil.summary/v0",
+  "description": "The single document Vigil produces. Severity is combined from the named authorities' own verdicts; Vigil never derives severity from raw data. Additive within v0; consumers refuse unknown majors.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "generated_at",
+    "overall",
+    "verdicts",
+    "hosts",
+    "sources"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "vigil.summary/v0"
+    },
+    "generated_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "overall": {
+      "description": "Worst severity across available verdicts, after the stale cap and the missing-authority cap. Null when no authority could be read.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "GREEN",
+        "YELLOW",
+        "RED",
+        null
+      ]
+    },
+    "verdicts": {
+      "description": "One entry per configured authority. An authority that could not be read still appears, with state unavailable and severity null.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/verdict"
+      }
+    },
+    "vantage": {
+      "$ref": "#/$defs/vantage"
+    },
+    "hosts": {
+      "description": "Per-host view carried from Simplex only. Never merged with alert state.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/host"
+      }
+    },
+    "sources": {
+      "description": "Backend and informational-source status. Status lives here and nowhere else.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "augur": {
+      "description": "Reserved. Data only, no status. Content frozen when Augur's Vigil-fields phase exits.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "cubit": {
+      "description": "Reserved. Data only, no status, never affects overall.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "scry": {
+      "$ref": "#/$defs/scry"
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "description": "RFC 3339 UTC. Pattern-pinned because format assertions are not enabled by default.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+    },
+    "slug": {
+      "description": "Public-safe identifier. No addresses, no paths, no dots.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9\\-]{0,31}$"
+    },
+    "reason": {
+      "description": "Reason code. Authorities own their strings; Vigil validates the shape only and adds five of its own (source_stale, source_unavailable, schema_major, clock_skew, authority_unavailable).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,47}$"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "stale",
+        "unavailable"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "GREEN",
+        "YELLOW",
+        "RED"
+      ]
+    },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "state",
+        "severity",
+        "reasons",
+        "observed_at"
+      ],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/slug"
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "severity": {
+          "description": "Severity as published by the authority, or null when state is unavailable.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "GREEN",
+            "YELLOW",
+            "RED",
+            null
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reason"
+          }
+        },
+        "observed_at": {
+          "description": "The authority document's generated_at, or null when no document could be read at all.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+        }
+      }
+    },
+    "vantage": {
+      "description": "Carried from Simplex. A blind vantage is a verdict, not an unavailable source.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "blind",
+            "unchecked"
+          ]
+        }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "severity",
+        "reasons",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "severity": {
+          "$ref": "#/$defs/severity"
+        },
+        "reasons": {
+          "description": "Passed through from the host's Simplex entry unchanged; may be empty.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/reason"
+          }
+        },
+        "source": {
+          "const": "simplex"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "state",
+        "observed_at"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "prom",
+            "grafana",
+            "simplex",
+            "augur",
+            "scry",
+            "cubit"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/state"
+        },
+        "observed_at": {
+          "description": "Null when the source has never been observed.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+        },
+        "last_ok": {
+          "description": "Last time the source was read successfully, or null.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+        },
+        "detail_code": {
+          "description": "Machine code for the current state, or null.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-z][a-z0-9_]{0,47}$"
+        },
+        "vantage": {
+          "description": "The Prometheus vantage that answered. Only meaningful for kind prom.",
+          "$ref": "#/$defs/slug"
+        }
+      }
+    },
+    "scry": {
+      "description": "Reserved sketch: counts and reasons only. No node names, no server details, no status; Scry is not an authority.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "observed": {
+          "type": "boolean"
+        },
+        "generated_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "cluster_alias": {
+          "$ref": "#/$defs/slug"
+        },
+        "severity": {
+          "description": "Null when observed is false.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "GREEN",
+            "YELLOW",
+            "RED",
+            null
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reason"
+          }
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "nodes_total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "nodes_ready": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "readyz_pass": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "readyz_fail": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    }
+  }
+}

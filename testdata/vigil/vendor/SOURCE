@@ -1,0 +1,9 @@
+Vendored read-only copy. Do not edit; replace it only by re-vendoring from a new Vigil commit.
+
+file:    vigil.summary.v0.schema.json
+repo:    https://github.com/Hedronite/vigil
+path:    schema/vigil.summary.v0.schema.json
+commit:  44dfb0bb8d5c0598a44175cbe4478953f5c95d91
+sha256:  268794be9c0c96dc4462a1f28944b67e173842af337a8c80713c36b0105ab97c
+licence: Apache-2.0 (same as Vigil)
+used by: internal/vigil tests ($defs/scry, $defs/reason, $defs/slug, $defs/timestamp)

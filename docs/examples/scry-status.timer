@@ -1,0 +1,14 @@
+# Runs scry-status.service every 60 seconds. Vigil treats a file older than its
+# stale_after (120 s by default) as stale, so keep the interval well inside it.
+
+[Unit]
+Description=Scry cluster readiness snapshot, every 60 seconds
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=1s
+Unit=scry-status.service
+
+[Install]
+WantedBy=timers.target
