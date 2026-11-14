@@ -44,7 +44,7 @@ scry v0.1.0 (a1b2c3d4e5f6)
 
 The archive holds `scry`, `LICENSE` and `README.md`, nothing else. Scry is one static binary with no runtime dependencies.
 
-**Reproducible.** The binaries are built without cgo, with `-trimpath` and an empty build id, by the Go version `go.mod` names, and carry no build date, host name or path. Check out the tag and run `bash hack/release.sh v0.1.0`: every file in `dist/` hashes to the line in the release's `SHA256SUMS` (CI builds twice in two directories and fails if they differ). A binary built any other way prints `scry devel`.
+**Reproducible.** The binaries are built without cgo, with `-trimpath` and an empty build id, by the Go version `go.mod` names, and carry no build date, host name or path. Check out the tag and run `bash hack/release.sh v0.1.0`: every file in `dist/` hashes to the line in the release's `SHA256SUMS`, on any machine (CI builds twice in two directories and fails if they differ, and a build on a different operating system and architecture was checked to match). A rebuild needs the same commit, because a binary carries its commit (check out the tag itself, not a branch or a pull-request merge), and the Go version `go.mod` pins; a different commit or Go version gives different bytes. To check a download, `sha256sum -c` and `gh attestation verify` are enough. A binary built any other way prints `scry devel`.
 
 ## Getting started
 

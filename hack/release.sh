@@ -4,8 +4,12 @@
 #
 #   hack/release.sh v0.1.0
 #
-# Reproducible means: the same commit and the same Go toolchain give the same
-# bytes on any machine. Inputs that could differ are pinned or refused here:
+# Reproducible means: the same commit and the same Go version give the same
+# bytes on any machine. A binary carries its commit, so "the same commit" is
+# exact: build the tag commit itself, not a branch, a merge commit or a tarball
+# of it. This was checked across hosts: the CI runner (linux/amd64) and a
+# darwin/arm64 workstation produced identical hashes for all six files.
+# Inputs that could differ are pinned or refused here:
 # the Go version (exactly the one in go.mod), CGO off, -trimpath, an empty
 # build id, an explicit GOAMD64/GOARM64, a clean checkout (so the VCS stamp is
 # the commit, never "modified"), and archive metadata taken from the commit.

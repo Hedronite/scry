@@ -33,6 +33,6 @@ First release. Scry is a small, inspect-only command-line tool that answers one 
 
 ### Release
 
-- Reproducible, CGO-free builds for linux/amd64, linux/arm64 and darwin/arm64 from `hack/release.sh`: pinned Go, `-trimpath`, empty build id, no build date, deterministic archives, `SHA256SUMS`. CI builds twice in two directories and fails if any hash differs.
+- Reproducible, CGO-free builds for linux/amd64, linux/arm64 and darwin/arm64 from `hack/release.sh`: pinned Go, `-trimpath`, empty build id, no build date, deterministic archives, `SHA256SUMS`. Rebuilding the tag commit with the pinned Go gives the same bytes on any machine (checked between a Linux runner and a macOS workstation); a different commit or Go version does not. CI builds twice in two directories and fails if any hash differs.
 - Release archives carry GitHub build provenance attestations; verify with `gh attestation verify`.
 - Performance budgets and numbers are in `docs/performance.md`.
