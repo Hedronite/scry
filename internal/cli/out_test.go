@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Hedronite/scry/internal/exitcode"
+	"github.com/Hedronite/scry/internal/outfile"
+	"github.com/Hedronite/scry/internal/report"
 	"github.com/Hedronite/scry/internal/schematest"
 )
 
@@ -243,5 +246,50 @@ func TestOutUsageErrors(t *testing.T) {
 		if got := fileOf(t, p); got != "x" {
 			t.Fatalf("a credential or config file was modified: %q", got)
 		}
+	}
+}
+
+// K3 (R9): once the rename has succeeded, a directory fsync failure is a stderr
+// warning (silenced by --quiet) and the exit code follows the status result.
+func TestDirSyncFailureIsAWarningAndExitFollowsStatus(t *testing.T) {
+	old := writeOut
+	t.Cleanup(func() { writeOut = old })
+	for _, c := range []struct {
+		name string
+		obs  report.Observation
+		code int
+	}{{"green", okObs(2, 2), 0}, {"yellow", okObs(1, 2), 1}, {"red", readyzFailing(), 2}} {
+		t.Run(c.name, func(t *testing.T) {
+			install(t, c.obs)
+			var wrote string
+			writeOut = func(path string, data []byte) error {
+				if err := outfile.Write(path, data); err != nil {
+					return err
+				}
+				wrote = path
+				return fmt.Errorf("sync directory: %w: input/output error", outfile.ErrDirSync)
+			}
+			dir, path := seed(t)
+			code, out, errs := run(t, "status", "--kubeconfig", "synthetic", "--json", "--out", path)
+			if code != c.code {
+				t.Fatalf("code = %d, want %d (exit follows status)", code, c.code)
+			}
+			if err := schematest.Status([]byte(out)); err != nil || strings.Contains(out, "out_write_failed") {
+				t.Fatalf("stdout is not the observed document: %v\n%s", err, out)
+			}
+			if !strings.HasPrefix(errs, "scry: warning: ") || strings.Count(errs, "\n") != 1 || strings.Contains(errs, dir) {
+				t.Fatalf("stderr = %q, want one warning line without the path", errs)
+			}
+			if wrote == "" || fileOf(t, path) == sentinel {
+				t.Fatal("the new file is not in place")
+			}
+
+			// --quiet: the warning is silenced too, the exit is unchanged.
+			install(t, c.obs)
+			code, out, errs = run(t, "status", "--kubeconfig", "synthetic", "--quiet", "--out", path)
+			if code != c.code || out != "" || errs != "" {
+				t.Fatalf("quiet: code=%d out=%q err=%q", code, out, errs)
+			}
+		})
 	}
 }

@@ -14,10 +14,13 @@ import (
 
 // Set at link time:
 //
-//	-X github.com/Hedronite/scry/internal/cli.version=1.2.3
+//	-X github.com/Hedronite/scry/internal/cli.version=v1.2.3
 //	-X github.com/Hedronite/scry/internal/cli.commit=abc1234
+//
+// An unstamped build reports "devel", never a made-up version. hack/release.sh
+// stamps the tag; the commit comes from the VCS stamp Go embeds.
 var (
-	version = "0.0.0-dev"
+	version = "devel"
 	commit  = ""
 )
 

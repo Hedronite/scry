@@ -8,10 +8,17 @@
 package outfile
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 )
+
+// ErrDirSync is returned (wrapped) when the rename succeeded and only the final
+// directory fsync failed. The new file is in place and complete; what is not
+// confirmed is that the rename survives a crash. Callers treat it as a warning,
+// not a failed write: errors.Is(err, ErrDirSync).
+var ErrDirSync = errors.New("directory sync failed after the rename")
 
 // Mode is the permission of the published file. The status document holds no
 // secrets, addresses or node names beyond what its schema allows, and the
@@ -27,8 +34,9 @@ const Mode os.FileMode = 0o644
 //  4. fsync the directory so the rename itself survives a crash.
 //
 // On any error before the rename the temp file is removed and path is left
-// exactly as it was. If only the final directory fsync fails, the new file is
-// already in place; the error still reports that durability is unconfirmed.
+// exactly as it was. Once the rename has succeeded the new file is in place; if
+// only the final directory fsync then fails, the error wraps ErrDirSync so the
+// caller can tell "not written" from "written, durability unconfirmed".
 // A path that is a symbolic link is replaced by the new file, not followed.
 //
 // Errors never contain path: callers print them.
@@ -66,18 +74,24 @@ func Write(path string, data []byte) error {
 	}
 	committed = true
 
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("sync directory: %w: %w", ErrDirSync, scrub(err))
+	}
+	return nil
+}
+
+// syncDir fsyncs a directory so a completed rename survives a crash. It is a
+// variable so a test can make it fail.
+var syncDir = func(dir string) error {
 	d, err := os.Open(dir) //nolint:gosec // dir is the caller-chosen output directory
 	if err != nil {
-		return fmt.Errorf("open directory: %w", scrub(err))
+		return err
 	}
 	if err := d.Sync(); err != nil {
 		_ = d.Close()
-		return fmt.Errorf("sync directory: %w", scrub(err))
+		return err
 	}
-	if err := d.Close(); err != nil {
-		return fmt.Errorf("close directory: %w", scrub(err))
-	}
-	return nil
+	return d.Close()
 }
 
 // scrub drops the path an *os.PathError or *os.LinkError carries, keeping the

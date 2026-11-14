@@ -80,3 +80,42 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+
+  reproducible:
+    name: reproducible
+    runs-on: ubuntu-latest
+    steps:
+      # Build the commit itself, not the pull request merge commit GitHub makes
+      # for the run: a binary carries its commit, so only the same commit can
+      # hash the same on another machine (the uploaded SHA256SUMS is for that).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Two clean builds, two directories
+        run: |
+          set -euo pipefail
+          go version
+          # A second clean checkout of the same commit in a different directory.
+          git worktree add --detach "$RUNNER_TEMP/scry-second" HEAD
+          bash hack/release.sh v0.0.0-ci
+          (cd "$RUNNER_TEMP/scry-second" && bash hack/release.sh v0.0.0-ci)
+          cp dist/SHA256SUMS "$RUNNER_TEMP/first.sums"
+          diff -u "$RUNNER_TEMP/first.sums" "$RUNNER_TEMP/scry-second/dist/SHA256SUMS"
+          echo "both builds hash identically:"
+          cat dist/SHA256SUMS
+      - name: The stamped binary reports its tag and commit
+        run: |
+          set -euo pipefail
+          out="$(dist/scry_0.0.0-ci_linux_amd64 version)"
+          echo "$out"
+          [[ "$out" == "scry v0.0.0-ci ($(git rev-parse HEAD | cut -c1-12))" ]]
+          dist/scry_0.0.0-ci_linux_amd64 version --json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+          if-no-files-found: error

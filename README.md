@@ -2,9 +2,9 @@
 
 Scry is a small, inspect-only command-line tool that answers one question about a Kubernetes cluster: **is it ready, and if not, what is not?**
 
-It is a companion to [hedronetes-h3s](https://github.com/VirtualMachinist/hedronetes-h3s) and works against stock Kubernetes too. It is not an operator or a control plane: it reads and reports, and it is built so it cannot write.
+It is a companion to [hedronetes-h3s](https://github.com/VirtualMachinist/hedronetes-h3s) (h3s, a Kubernetes-compatible control plane in a single binary) and works against stock Kubernetes too. It is not an operator or a control plane: it reads and reports, and it is built so it cannot write.
 
-> **Status:** alpha. The contract — the `scry.status/v0` document, the exit codes, and the request allowlist — is frozen. `scry status` and `scry wait` observe a real cluster; `scry status --out` writes the file Vigil reads; signed releases come later.
+> **Status:** v0.1.0, pre-1.0. The contract — the `scry.status/v0`, `scry.config/v0` and `scry.version/v0` documents (schemas under [`schema/`](schema)), the exit codes and the request allowlist — changes only additively. Releases are reproducible and carry build provenance (see [Install](#install)).
 
 ## What Scry does
 
@@ -18,6 +18,33 @@ It is a companion to [hedronetes-h3s](https://github.com/VirtualMachinist/hedron
 - No watches and no long-lived connections: `wait` polls with bounded backoff, one fresh request at a time.
 - No in-cluster mode and no implicit kubeconfig: you pass the path explicitly.
 - No exec-based or auth-provider credentials, and no skipping TLS verification.
+
+## Install
+
+Download an archive for your platform from the [releases page](https://github.com/Hedronite/scry/releases): `linux/amd64`, `linux/arm64` or `darwin/arm64`. Each release lists the archives, a `SHA256SUMS` file, and a build provenance attestation per archive.
+
+```console
+$ VERSION=0.1.0 OS=linux ARCH=amd64        # or: darwin arm64, linux arm64
+$ BASE=https://github.com/Hedronite/scry/releases/download/v$VERSION
+$ curl -fsSLO $BASE/scry_${VERSION}_${OS}_${ARCH}.tar.gz
+$ curl -fsSLO $BASE/SHA256SUMS
+
+# 1. the checksum
+$ grep " scry_${VERSION}_${OS}_${ARCH}.tar.gz\$" SHA256SUMS | sha256sum -c -       # Linux
+$ grep " scry_${VERSION}_${OS}_${ARCH}.tar.gz\$" SHA256SUMS | shasum -a 256 -c -   # macOS
+
+# 2. the build provenance (needs the GitHub CLI, `gh`): proves this archive was built by
+#    this repository's release workflow, not by someone else and renamed
+$ gh attestation verify scry_${VERSION}_${OS}_${ARCH}.tar.gz --repo Hedronite/scry
+
+$ tar xzf scry_${VERSION}_${OS}_${ARCH}.tar.gz
+$ ./scry_${VERSION}_${OS}_${ARCH}/scry version
+scry v0.1.0 (a1b2c3d4e5f6)
+```
+
+The archive holds `scry`, `LICENSE` and `README.md`, nothing else. Scry is one static binary with no runtime dependencies.
+
+**Reproducible.** The binaries are built without cgo, with `-trimpath` and an empty build id, by the Go version `go.mod` names, and carry no build date, host name or path. Check out the tag and run `bash hack/release.sh v0.1.0`: every file in `dist/` hashes to the line in the release's `SHA256SUMS`, on any machine (CI builds twice in two directories and fails if they differ, and a build on a different operating system and architecture was checked to match). A rebuild needs the same commit, because a binary carries its commit (check out the tag itself, not a branch or a pull-request merge), and the Go version `go.mod` pins; a different commit or Go version gives different bytes. To check a download, `sha256sum -c` and `gh attestation verify` are enough. A binary built any other way prints `scry devel`.
 
 ## Getting started
 
@@ -40,9 +67,32 @@ reasons:    node_not_ready, network_unavailable
 
 Add `--json` for the machine-readable `scry.status/v0` document (see [`schema/scry.status.v0.json`](schema/scry.status.v0.json)); add `--quiet` for the exit code only. Wait for readiness with `scry wait --for=readyz` (below).
 
+### Quickstart with a config file
+
+Name your clusters once in a TOML file (paths and expectations only, never credentials) and select one by alias:
+
+```toml
+# scry.toml
+schema = "scry.config/v0"
+
+[[cluster]]
+alias = "lab-one"
+kubeconfig = "./lab-one.kubeconfig"
+expected = "light"
+timeout = "10s"        # per request
+```
+
+```console
+$ scry status --config ./scry.toml --cluster lab-one
+$ scry wait --for=readyz --config ./scry.toml --cluster lab-one --timeout 2m
+$ scry status --config ./scry.toml --json      # one entry in the file: --cluster is optional
+```
+
+Scry never reads a config unless you pass `--config`, and never reads a kubeconfig you did not point it at.
+
 ## How Scry talks to a cluster
 
-- **Kubeconfig:** required, by explicit path (`--kubeconfig`). `$KUBECONFIG` is honoured only when you also pass `--allow-env-kubeconfig`. `--context` selects a context; a missing one is refused, listing the contexts the file actually has.
+- **Kubeconfig:** never implicit. Give a path with `--kubeconfig PATH`, or name a cluster entry with `--config` (the entry carries the kubeconfig path). You get a kubeconfig from whoever runs the cluster; Scry never creates one. `$KUBECONFIG` is honoured only when you also pass `--allow-env-kubeconfig`. `--context` selects a context; a missing one is refused, listing the contexts the file actually has.
 - **Authentication:** client certificates and static bearer tokens (including `tokenFile`). Exec-based and `auth-provider` credentials are refused at load, before any network traffic.
 - **TLS:** verification is always on. `insecure-skip-tls-verify` is refused; there is no unsafe flag.
 - **Allowlist:** every request is checked against this table, and refused locally if it is not on it. Redirects are refused.
@@ -89,22 +139,45 @@ When Scry cannot get a verdict from the wire — a config problem, refused crede
 | 0    | observed, GREEN (includes expected dark)             |
 | 1    | observed, YELLOW                                     |
 | 2    | observed, RED; also a `wait` timeout                 |
-| 3    | config: bad kubeconfig, refused auth kind, missing context, wait on a declared-dark cluster |
+| 3    | config: bad kubeconfig, refused auth kind, missing context, wait on a declared-dark cluster, `--out` could not be written |
 | 4    | auth: credentials rejected                           |
 | 5    | TLS: verification failed                             |
 | 6    | transport: connected, then the peer went silent      |
 | 7    | internal error (including an allowlist refusal)      |
 | 8    | usage: bad flags; no document is emitted             |
 
+### Reason codes
+
+`reasons` in the document lists why the severity is what it is, or why there is no severity. Codes marked with an exit code are the cause of an unobserved document (`observed: false`).
+
+| Reason | Exit | Meaning |
+| --- | --- | --- |
+| `expected_dark` | — | apiserver unreachable, and declared expected dark: GREEN |
+| `apiserver_down` | — | TCP connection failed on a cluster expected to be up: RED |
+| `readyz_failed` | — | `/readyz` did not return 200: RED |
+| `no_nodes` | — | the node list is empty: RED |
+| `node_not_ready` | — | some or all nodes are not Ready (or Unknown): YELLOW, or RED when none is ready |
+| `network_unavailable` | — | a node reports `NetworkUnavailable=True`: YELLOW |
+| `timeout` | — | `wait` ran out of time; exit 2 |
+| `wait_expected_dark` | 3 | `wait` refused a cluster declared expected dark |
+| `config_invalid` | 3 | the config file is unreadable, invalid or names no such cluster |
+| `kubeconfig_missing`, `kubeconfig_invalid` | 3 | no kubeconfig given, or it cannot be used (including a missing context) |
+| `exec_auth_refused`, `auth_provider_refused`, `insecure_tls_refused` | 3 | the kubeconfig asks for a credential kind or setting Scry refuses |
+| `out_write_failed` | 3 | `--out` could not be written; the old file is untouched |
+| `auth_rejected`, `rbac_denied` | 4 | 401, or 403 (listing nodes needs `get` and `list` on `nodes`) |
+| `tls_verify_failed`, `tls_cert_expired` | 5 | the server certificate could not be verified |
+| `http_unresponsive` | 6 | connected, then the peer reset or went silent |
+| `allowlist_denied`, `internal` | 7 | a bug: Scry asked for something it must not, or failed unexpectedly |
+
 ## Exporting to Vigil
 
-`scry status --out PATH` also writes the full `scry.status/v0` document to `PATH` (temp file in the same directory, fsync, atomic rename, mode `0644`), whatever stdout shows. A timer runs it every minute and [Vigil](https://github.com/Hedronite/vigil) reads the file; Vigil never runs Scry or holds a kubeconfig. The file is written on exits 0, 1, 2, 4, 5 and 6, never on 3, 7 or 8 (the last file stays and Vigil ages it into stale); a failed write is exit 3, reason `out_write_failed`. One file feeds Vigil one cluster today. See [docs/vigil.md](docs/vigil.md) for the mapping to Vigil's `scry{}` block, and [docs/examples](docs/examples) for systemd and launchd timers.
+[Vigil](https://github.com/Hedronite/vigil) is the summariser that turns per-source feeds like this one into a single fleet view. `scry status --out PATH` also writes the full `scry.status/v0` document to `PATH` (temp file in the same directory, fsync, atomic rename, mode `0644`), whatever stdout shows. A timer runs it every minute and [Vigil](https://github.com/Hedronite/vigil) reads the file; Vigil never runs Scry or holds a kubeconfig. The file is written on exits 0, 1, 2, 4, 5 and 6, never on 3, 7 or 8 (the last file stays and Vigil ages it into stale); a failed write is exit 3, reason `out_write_failed`. `--out` belongs to `status`; `scry wait --out` is refused (exit 8). The write is all-or-nothing: if only the final directory sync fails after the rename, the file is in place, one warning goes to stderr (silenced by `--quiet`) and the exit code follows the status result. One file feeds Vigil one cluster today. See [docs/vigil.md](docs/vigil.md) for the mapping to Vigil's `scry{}` block, and [docs/examples](docs/examples) for systemd and launchd timers.
 
 ## Waiting
 
 `scry wait --for=readyz` polls until ready or `--timeout` (default `60s`) expires. Every poll observes the cluster once, with each connection closed after use so a rotated certificate is picked up on the next poll. The schedule is bounded backoff: 500ms growing 1.5x to a 5s cap, no jitter.
 
-- **Ready** means an observed poll with `/readyz` ok and the apiserver `up`. Exit 0, or 1 when ready but degraded.
+- **Ready** means an observed poll with `/readyz` ok and the apiserver `up`. Exit 0, or 1 when ready but degraded (`/readyz` passes but some node is not Ready or reports `NetworkUnavailable`).
 - **Timeout** keeps the last poll's document, adds reason `timeout`, and always exits 2.
 - **Fail fast:** config (3), auth (4), TLS (5) and internal (7) failures end the wait immediately — waiting cannot heal them.
 - **Keep polling:** an unreachable (down) or silent peer keeps polling until the timeout.
@@ -113,8 +186,8 @@ When Scry cannot get a verdict from the wire — a config problem, refused crede
 ## What "ready" means
 
 - **API server:** `up` means the peer answered (even with a 401 or a certificate failure — the endpoint exists and speaks), `down` means the TCP connection failed, `unknown` means no verdict from the wire (see Output above).
-- **Readyz:** on stock Kubernetes, Scry parses `?verbose` sub-checks when the server offers them. On h3s, `/readyz` answers a bare `ok` and nothing else; Scry reports that as `aggregate` and prints "no sub-checks reported" rather than inventing detail. A bare `ok` proves the API server process answers — it does not prove workloads can run.
-- **Nodes:** the `Ready` condition of every node in `/api/v1/nodes`, plus `NetworkUnavailable`. A node whose `Ready` condition is neither True nor False is reported with `unknown: true` (rendered `UNKNOWN`, counted as not ready). All nodes not Ready — or all without a verdict — is RED; some is YELLOW. Scry never dials kubelet ports and never hardcodes component names.
+- **Readyz:** on stock Kubernetes, Scry parses `?verbose` sub-checks when the server offers them. On h3s, `/readyz` and `/livez` return a hard-coded `ok` before authentication, with no sub-checks, so the node conditions are the real readiness signal there; Scry reports that bare `ok` as `aggregate` and prints "no sub-checks reported" rather than inventing detail. A bare `ok` proves the API server process answers — it does not prove workloads can run.
+- **Nodes:** the `Ready` condition of every node in `/api/v1/nodes`, plus `NetworkUnavailable`. A node whose `Ready` condition is neither True nor False (typically the kubelet stopped reporting, so there is no verdict) is reported with `unknown: true` (rendered `UNKNOWN`, counted as not ready). All nodes not Ready — or all without a verdict — is RED; some is YELLOW. Scry never dials kubelet ports and never hardcodes component names.
 
 ## Configuration file
 
@@ -138,7 +211,7 @@ Resolution: `--config` with `--cluster` selects that cluster's entry (kubeconfig
 $ go build ./cmd/scry
 ```
 
-Go 1.27 or newer. Pinned versions and their reasons are recorded in [`docs/versions.md`](docs/versions.md).
+Go 1.27 or newer (the exact version is pinned in `go.mod`). `bash hack/release.sh vX.Y.Z` builds the release assets locally. Performance budgets and measurements: [`docs/performance.md`](docs/performance.md). Pinned versions and their reasons are recorded in [`docs/versions.md`](docs/versions.md).
 
 ## Security promise
 
