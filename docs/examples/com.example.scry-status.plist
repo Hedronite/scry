@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Scry status snapshot for a file reader such as Vigil, as a launchd job.
+  Every path is a placeholder: change it, and rename the Label.
+
+    /usr/local/bin/scry            the scry binary
+    /etc/scry/scry.toml            scry.config/v0 (one cluster entry; see docs/vigil.md)
+    /var/lib/scry/status.json      the file the reader polls (the directory must exist
+                                   and be writable by the job's user)
+
+  Install as a LaunchDaemon (root-owned plist; add a UserName key to drop
+  privileges) or as a per-user LaunchAgent. Exit 1 and 2
+  are verdicts, not failures; launchd does not distinguish, so read the exit
+  code from the log or from the file itself.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.scry-status</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/scry</string>
+    <string>status</string>
+    <string>--json</string>
+    <string>--config</string>
+    <string>/etc/scry/scry.toml</string>
+    <string>--out</string>
+    <string>/var/lib/scry/status.json</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>60</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>18</integer>
+  <key>StandardOutPath</key>
+  <string>/var/log/scry/status.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/scry/status.err</string>
+</dict>
+</plist>

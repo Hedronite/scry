@@ -1,0 +1,39 @@
+# Scry status snapshot for a file reader such as Vigil. Runs once per timer tick
+# (see scry-status.timer). Every path below is a placeholder: change it.
+#
+#   /usr/local/bin/scry            the scry binary
+#   /etc/scry/scry.toml            scry.config/v0 (one cluster entry; see docs/vigil.md)
+#   /var/lib/scry/status.json      the file the reader polls
+#
+# Exit 0, 1 and 2 are verdicts (GREEN, YELLOW, RED), not unit failures, so they
+# are listed in SuccessExitStatus. Exits 3 to 8 are real failures: the unit goes
+# failed, the last status.json stays in place, and the reader ages it into stale.
+
+[Unit]
+Description=Scry cluster readiness snapshot
+Documentation=https://github.com/Hedronite/scry/blob/main/docs/vigil.md
+
+[Service]
+Type=oneshot
+User=scry
+Group=scry
+UMask=0022
+StateDirectory=scry
+StateDirectoryMode=0755
+SuccessExitStatus=1 2
+ExecStart=/usr/local/bin/scry status --json --config /etc/scry/scry.toml --out /var/lib/scry/status.json
+
+# Hardening. scry only reads its config and kubeconfig, talks to one API server,
+# and writes one file inside its state directory.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
