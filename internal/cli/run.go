@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ type Observer interface {
 var (
 	newObserver            = func(o kube.Options) (Observer, error) { return kube.New(o) }
 	nowFunc                = time.Now
+	writeOut               = outfile.Write
 	clock       wait.Clock = wait.RealClock{}
 )
 
@@ -196,7 +198,16 @@ func finishStatus(s Streams, c *Common, o outOpt, d report.Document, extra error
 	if o.set && publishable(d) {
 		b, err := marshalDoc(d)
 		if err == nil {
-			err = outfile.Write(o.path, b)
+			err = writeOut(o.path, b)
+		}
+		if errors.Is(err, outfile.ErrDirSync) {
+			// The rename succeeded, so the new file is in place and the exit
+			// code stays what the status result says. Only crash durability of
+			// the rename is unconfirmed: say so, never fail on it.
+			if !c.Quiet {
+				_, _ = fmt.Fprintln(s.Err, "scry: warning: the --out file was written but the directory sync failed")
+			}
+			err = nil
 		}
 		if err != nil {
 			e := exitcode.Wrap(exitcode.OutWriteFailed, err, "cannot write the --out file")
