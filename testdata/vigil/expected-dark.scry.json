@@ -1,0 +1,15 @@
+{
+  "observed": true,
+  "generated_at": "2026-11-13T20:00:00Z",
+  "cluster_alias": "lab-one",
+  "severity": "GREEN",
+  "reasons": [
+    "expected_dark"
+  ],
+  "counts": {
+    "nodes_total": 0,
+    "nodes_ready": 0,
+    "readyz_pass": 0,
+    "readyz_fail": 0
+  }
+}
