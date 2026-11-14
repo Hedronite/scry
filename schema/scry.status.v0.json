@@ -113,6 +113,7 @@
           "insecure_tls_refused",
           "config_invalid",
           "allowlist_denied",
+          "out_write_failed",
           "internal"
         ]
       }

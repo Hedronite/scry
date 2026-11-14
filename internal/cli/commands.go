@@ -22,7 +22,10 @@ var (
 )
 
 func newStatus(s Streams) *cobra.Command {
-	var c Common
+	var (
+		c   Common
+		out string
+	)
 	cmd := &cobra.Command{
 		Use:     "status",
 		Short:   statusShort,
@@ -30,10 +33,11 @@ func newStatus(s Streams) *cobra.Command {
 		Example: statusExample,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runStatus(cmd.Context(), s, &c)
+			return runStatus(cmd.Context(), s, &c, outOpt{set: cmd.Flags().Changed("out"), path: out})
 		},
 	}
 	c.bind(cmd)
+	cmd.Flags().StringVar(&out, "out", "", flagOut)
 	return cmd
 }
 

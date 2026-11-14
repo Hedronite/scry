@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/Hedronite/scry/internal/config"
 	"github.com/Hedronite/scry/internal/exitcode"
 	"github.com/Hedronite/scry/internal/kube"
+	"github.com/Hedronite/scry/internal/outfile"
 	"github.com/Hedronite/scry/internal/report"
 	"github.com/Hedronite/scry/internal/wait"
 )
@@ -106,11 +109,11 @@ func emit(s Streams, c *Common, d report.Document, extra error) error {
 	if !c.Quiet {
 		switch {
 		case c.JSON:
-			enc := json.NewEncoder(s.Out)
-			enc.SetIndent("", "  ")
-			if err := enc.Encode(d); err != nil {
+			b, err := marshalDoc(d)
+			if err != nil {
 				return exitcode.Wrap(exitcode.InternalError, err, "cannot encode the document")
 			}
+			_, _ = s.Out.Write(b)
 		default:
 			_, _ = fmt.Fprintln(s.Out, report.Render(d))
 		}
@@ -124,19 +127,107 @@ func emit(s Streams, c *Common, d report.Document, extra error) error {
 	return nil
 }
 
-func runStatus(ctx context.Context, s Streams, c *Common) error {
+// marshalDoc is the one encoding of a document: what --json prints and what
+// --out writes, byte for byte.
+func marshalDoc(d report.Document) ([]byte, error) {
+	b, err := json.MarshalIndent(d, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
+}
+
+// outOpt is the status --out flag. set distinguishes an absent flag from an
+// empty value.
+type outOpt struct {
+	set  bool
+	path string
+}
+
+// validate checks --out before any I/O.
+func (o outOpt) validate(c *Common) error {
+	if !o.set {
+		return nil
+	}
+	switch o.path {
+	case "":
+		return usage("--out needs a file path")
+	case "-":
+		return usage("--out takes a file path, not stdout; use --json to print the document")
+	}
+	for _, other := range []string{c.Kubeconfig, c.Config} {
+		if other != "" && samePath(o.path, other) {
+			return usage("--out must not be the kubeconfig or config file")
+		}
+	}
+	return nil
+}
+
+// samePath reports whether a and b name the same file, existing or not, so an
+// atomic rewrite can never replace a credential or config file.
+func samePath(a, b string) bool {
+	if fa, err := os.Stat(a); err == nil {
+		if fb, err := os.Stat(b); err == nil && os.SameFile(fa, fb) {
+			return true
+		}
+	}
+	aa, errA := filepath.Abs(a)
+	bb, errB := filepath.Abs(b)
+	return errA == nil && errB == nil && aa == bb
+}
+
+// publishable reports whether a document goes to the --out file: exits 0, 1, 2
+// (observed) and 4, 5, 6 (unobserved). Exits 3, 7 and 8 write nothing, so the
+// last file stays and its reader ages it into stale.
+func publishable(d report.Document) bool {
+	switch d.ExitCode() {
+	case exitcode.Green, exitcode.Yellow, exitcode.Red, exitcode.Auth, exitcode.TLS, exitcode.Transport:
+		return true
+	case exitcode.Config, exitcode.Internal, exitcode.Usage:
+		return false
+	}
+	return false
+}
+
+// finishStatus writes the --out file when the document qualifies, then emits.
+// A failed write replaces the document with an unobserved out_write_failed one
+// (exit 3) so stdout and the exit code still agree; the old file is untouched.
+func finishStatus(s Streams, c *Common, o outOpt, d report.Document, extra error) error {
+	if o.set && publishable(d) {
+		b, err := marshalDoc(d)
+		if err == nil {
+			err = outfile.Write(o.path, b)
+		}
+		if err != nil {
+			e := exitcode.Wrap(exitcode.OutWriteFailed, err, "cannot write the --out file")
+			if !c.Quiet {
+				_, _ = fmt.Fprintf(s.Err, "scry: %s\n", e.Message)
+			}
+			d, extra = failureDoc(d.Cluster, e), e
+		}
+	}
+	return emit(s, c, d, extra)
+}
+
+func runStatus(ctx context.Context, s Streams, c *Common, o outOpt) error {
 	if err := c.Validate(); err != nil {
+		return err
+	}
+	if err := o.validate(c); err != nil {
 		return err
 	}
 	opts, err := resolve(c)
 	if err != nil {
-		return emit(s, c, failureDoc(clusterOf(opts), err), err)
+		return finishStatus(s, c, o, failureDoc(clusterOf(opts), err), err)
+	}
+	if o.set && opts.Kubeconfig != "" && samePath(o.path, opts.Kubeconfig) {
+		return usage("--out must not be the kubeconfig or config file")
 	}
 	obs, err := newObserver(opts)
 	if err != nil {
-		return emit(s, c, failureDoc(clusterOf(opts), err), err)
+		return finishStatus(s, c, o, failureDoc(clusterOf(opts), err), err)
 	}
-	return emit(s, c, report.Build(obs.Observe(ctx), nowFunc()), nil)
+	return finishStatus(s, c, o, report.Build(obs.Observe(ctx), nowFunc()), nil)
 }
 
 func runWait(ctx context.Context, s Streams, c *Common, forWhat string, timeout time.Duration) error {
