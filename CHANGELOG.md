@@ -2,7 +2,7 @@
 
 All notable changes to Scry are recorded here. Scry follows [Semantic Versioning](https://semver.org/); while the major version is 0, the documents `scry.status/v0`, `scry.config/v0` and `scry.version/v0` change only additively.
 
-## [Unreleased]
+## [0.1.1] - 2026-11-25
 
 A consumer that validates documents against a pinned copy of `scry.status/v0` must refresh it before taking this release: documents have new fields.
 
@@ -19,6 +19,7 @@ A consumer that validates documents against a pinned copy of `scry.status/v0` mu
 ### Changed
 
 - Config key names are now case-sensitive. A file that spelled a key `Alias` or `[[Cluster]]` was accepted before and is now refused (exit 3); with both `alias` and `Alias`, the second silently won.
+- CI: `scripts/check-vendor.sh` runs as a `vendor` job. It checks each vendored file against the sha256 in `SOURCE` and against the bytes at the recorded upstream commit. The CI workflow can also be started by hand.
 
 ## [0.1.0] - 2026-11-14
 
