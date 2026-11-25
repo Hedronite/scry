@@ -41,6 +41,11 @@ func Status(data []byte) error {
 	return validate("https://github.com/Hedronite/scry/schema/scry.status.v0.json", schema.StatusV0, data)
 }
 
+// Config validates the JSON form of a config file against scry.config/v0.
+func Config(data []byte) error {
+	return validate("https://github.com/Hedronite/scry/schema/scry.config.v0.json", schema.ConfigV0, data)
+}
+
 // Version validates data against scry.version/v0.
 func Version(data []byte) error {
 	return validate("https://github.com/Hedronite/scry/schema/scry.version.v0.json", schema.VersionV0, data)

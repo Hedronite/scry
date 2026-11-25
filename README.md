@@ -10,6 +10,7 @@ It is a companion to [hedronetes-h3s](https://github.com/VirtualMachinist/hedron
 
 - Reports API server reachability, `/readyz`, and node readiness as a table or as JSON (`scry.status/v0`).
 - Waits, with bounded polling, until a cluster is ready (`scry wait --for=readyz`).
+- Checks a config file without contacting any cluster (`scry validate`).
 - Treats a cluster you have declared *expected dark* as healthy when it is unreachable.
 
 ## What Scry does not do
@@ -65,7 +66,7 @@ severity:   YELLOW
 reasons:    node_not_ready, network_unavailable
 ```
 
-Add `--json` for the machine-readable `scry.status/v0` document (see [`schema/scry.status.v0.json`](schema/scry.status.v0.json)); add `--quiet` for the exit code only. Wait for readiness with `scry wait --for=readyz` (below).
+Add `--json` for the machine-readable `scry.status/v0` document (see [`schema/scry.status.v0.json`](schema/scry.status.v0.json)); add `--quiet` for the exit code only. Every document says whether the cluster was `observed`, how many whole seconds the document stands (`valid_for`: `--valid-for SECONDS`, default 120, twice the interval of the example timers) and which `declaration` configured the run (copied from the config file, `null` without one). Wait for readiness with `scry wait --for=readyz` (below).
 
 ### Quickstart with a config file
 
@@ -92,7 +93,7 @@ Scry never reads a config unless you pass `--config`, and never reads a kubeconf
 
 ## How Scry talks to a cluster
 
-- **Kubeconfig:** never implicit. Give a path with `--kubeconfig PATH`, or name a cluster entry with `--config` (the entry carries the kubeconfig path). You get a kubeconfig from whoever runs the cluster; Scry never creates one. `$KUBECONFIG` is honoured only when you also pass `--allow-env-kubeconfig`. `--context` selects a context; a missing one is refused, listing the contexts the file actually has.
+- **Kubeconfig:** never implicit. Give a path with `--kubeconfig PATH`, or name a cluster entry with `--config` (the entry carries the kubeconfig path). You get a kubeconfig from whoever runs the cluster; Scry never creates one. `$KUBECONFIG` is honoured only when you also pass `--allow-env-kubeconfig`; with that flag `--out` is refused for every file `$KUBECONFIG` names, however the path is spelled or linked. `--context` selects a context; a missing one is refused, listing the contexts the file actually has.
 - **Authentication:** client certificates and static bearer tokens (including `tokenFile`). Exec-based and `auth-provider` credentials are refused at load, before any network traffic.
 - **TLS:** verification is always on. `insecure-skip-tls-verify` is refused; there is no unsafe flag.
 - **Allowlist:** every request is checked against this table, and refused locally if it is not on it. Redirects are refused.
@@ -137,7 +138,7 @@ When Scry cannot get a verdict from the wire — a config problem, refused crede
 | Code | Meaning                                              |
 | ---- | ---------------------------------------------------- |
 | 0    | observed, GREEN (includes expected dark)             |
-| 1    | observed, YELLOW                                     |
+| 1    | observed, YELLOW; also a `wait` that ended ready but degraded |
 | 2    | observed, RED; also a `wait` timeout                 |
 | 3    | config: bad kubeconfig, refused auth kind, missing context, wait on a declared-dark cluster, `--out` could not be written |
 | 4    | auth: credentials rejected                           |
@@ -177,7 +178,7 @@ When Scry cannot get a verdict from the wire — a config problem, refused crede
 
 `scry wait --for=readyz` polls until ready or `--timeout` (default `60s`) expires. Every poll observes the cluster once, with each connection closed after use so a rotated certificate is picked up on the next poll. The schedule is bounded backoff: 500ms growing 1.5x to a 5s cap, no jitter.
 
-- **Ready** means an observed poll with `/readyz` ok and the apiserver `up`. Exit 0, or 1 when ready but degraded (`/readyz` passes but some node is not Ready or reports `NetworkUnavailable`).
+- **Ready** means an observed poll with `/readyz` ok and the apiserver `up`. Exit 0, or 1 when ready but degraded (`/readyz` passes but some node is not Ready or reports `NetworkUnavailable`). Degraded is exit 1 even when the document's severity is RED (no node Ready, or an empty node list); `scry status` on the same cluster exits 2.
 - **Timeout** keeps the last poll's document, adds reason `timeout`, and always exits 2.
 - **Fail fast:** config (3), auth (4), TLS (5) and internal (7) failures end the wait immediately — waiting cannot heal them.
 - **Keep polling:** an unreachable (down) or silent peer keeps polling until the timeout.
@@ -191,7 +192,7 @@ When Scry cannot get a verdict from the wire — a config problem, refused crede
 
 ## Configuration file
 
-Scry reads no config file unless you name one with `--config`. The file is TOML (`scry.config/v0`), holds paths and expected state — never credentials — and is validated strictly:
+Scry reads no config file unless you name one with `--config`. The file is TOML (`scry.config/v0`), holds paths and expected state — never credentials — and is validated strictly: unknown keys are errors, and key names are case-sensitive. Its JSON equivalent is described by [`schema/scry.config.v0.json`](schema/scry.config.v0.json). Check a file without contacting any cluster or opening any kubeconfig with `scry validate --config FILE` (exit 0 valid, 3 invalid, 8 usage):
 
 ```toml
 schema = "scry.config/v0"
@@ -202,6 +203,8 @@ kubeconfig = "./lab-one.kubeconfig"
 expected = "dark"
 timeout = "2m"
 ```
+
+An optional top-level `declaration = "sha256:<64 hex digits>"` is copied verbatim into every document. TOML has no null: leave the key out when undeclared.
 
 Resolution: `--config` with `--cluster` selects that cluster's entry (kubeconfig path, expected state, per-request timeout). With exactly one entry in the file, `--cluster` can be omitted; several entries without `--cluster` are refused, listing the aliases. Flags always beat the entry: `--kubeconfig` and `--expected` override whatever the file says. The entry's `timeout` limits each request; `wait --timeout` limits the whole run and has no config equivalent. `--cluster` without `--config` only overrides the report's alias.
 

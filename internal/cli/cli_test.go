@@ -68,9 +68,10 @@ func TestUsageErrorsExitEightWithoutDocument(t *testing.T) {
 func TestFlagSurfaceFrozen(t *testing.T) {
 	root := NewRoot(Streams{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}})
 	want := map[string][]string{
-		"status":  {"kubeconfig", "allow-env-kubeconfig", "context", "cluster", "expected", "config", "json", "quiet"},
-		"wait":    {"kubeconfig", "allow-env-kubeconfig", "context", "cluster", "expected", "config", "json", "quiet", "for", "timeout"},
-		"version": {"json"},
+		"status":   {"kubeconfig", "allow-env-kubeconfig", "context", "cluster", "expected", "config", "json", "quiet", "valid-for"},
+		"wait":     {"kubeconfig", "allow-env-kubeconfig", "context", "cluster", "expected", "config", "json", "quiet", "for", "timeout", "valid-for"},
+		"validate": {"config"},
+		"version":  {"json"},
 	}
 	for name, flags := range want {
 		cmd, _, err := root.Find([]string{name})

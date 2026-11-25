@@ -115,3 +115,48 @@ func TestLookupMissingListsAliases(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestDeclaration(t *testing.T) {
+	const head = "schema='scry.config/v0'\n"
+	hex := strings.Repeat("0123456789abcdef", 4)
+	if c, err := Parse([]byte(head)); err != nil || c.Declaration != nil {
+		t.Fatalf("absent: %+v %v", c, err)
+	}
+	if c, err := Parse([]byte(head + "declaration='sha256:" + hex + "'\n")); err != nil || c.Declaration == nil || *c.Declaration != "sha256:"+hex {
+		t.Fatalf("digest: %+v %v", c, err)
+	}
+	for _, value := range []string{
+		"''", "'null'", "null", "7", "true", "['sha256:" + hex + "']", "'" + hex + "'", "'sha1:" + hex + "'",
+		"'sha256:" + hex[1:] + "'", "'sha256:" + hex + "0'", "'sha256:" + strings.ToUpper(hex) + "'",
+		"' sha256:" + hex + "'", "\"sha256:" + hex + "\\n\"",
+	} {
+		_, err := Parse([]byte(head + "declaration=" + value + "\n"))
+		if err == nil || exitcode.CodeOf(err) != exitcode.Config {
+			t.Errorf("declaration=%s: err = %v, want exit 3", value, err)
+		}
+	}
+}
+
+// Keys are exact: the decoder alone would match them without regard to case.
+func TestKeysAreCaseSensitive(t *testing.T) {
+	const head = "schema='scry.config/v0'\n"
+	const entry = "alias='a'\nkubeconfig='/k'\n"
+	for name, in := range map[string]string{
+		"top schema":      "SCHEMA='scry.config/v0'\n",
+		"top declaration": head + "Declaration='sha256:" + strings.Repeat("a", 64) + "'\n",
+		"table name":      head + "[[Cluster]]\n" + entry,
+		"entry key":       head + "[[cluster]]\nALIAS='a'\nkubeconfig='/k'\n",
+		"override":        head + "[[cluster]]\n" + entry + "Alias='b'\n",
+		"inline table":    head + "cluster=[{Alias='a', kubeconfig='/k'}]\n",
+		"dotted":          head + "cluster.Alias='a'\n",
+		"single table":    head + "[cluster]\n" + entry,
+		"nested":          head + "[[cluster]]\n" + entry + "[cluster.extra]\nx=1\n",
+	} {
+		if _, err := Parse([]byte(in)); err == nil || exitcode.CodeOf(err) != exitcode.Config {
+			t.Errorf("%s: err = %v, want exit 3", name, err)
+		}
+	}
+	if c, err := Parse([]byte(head + "cluster=[{alias='a', kubeconfig='/k'}]\n")); err != nil || len(c.Clusters) != 1 {
+		t.Fatalf("an inline array of exact keys is valid TOML for the same value: %+v %v", c, err)
+	}
+}

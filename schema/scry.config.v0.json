@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Hedronite/scry/schema/scry.config.v0.json",
+  "title": "scry.config/v0",
+  "description": "The TOML file read with --config, described as the equivalent JSON value. It holds paths and expectations, never credentials. TOML has no null, so an undeclared file leaves declaration out. The loader also enforces what this schema cannot: aliases are unique, a timeout lies between 100ms and 60s, and the file is at most 64 KiB.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema"],
+  "properties": {
+    "schema": { "const": "scry.config/v0" },
+    "declaration": {
+      "description": "SHA-256 digest of the canonical watch declaration, or null when undeclared. Copied verbatim into every status document.",
+      "type": ["string", "null"],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "cluster": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["alias", "kubeconfig"],
+        "properties": {
+          "alias": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" },
+          "kubeconfig": { "type": "string", "minLength": 1 },
+          "expected": { "enum": ["", "light", "dark"], "description": "Empty or absent means light." },
+          "timeout": {
+            "type": "string",
+            "pattern": "^$|^\\+?(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$",
+            "description": "Per request, a Go duration between 100ms and 60s. Empty or absent means 5s."
+          }
+        }
+      }
+    }
+  }
+}

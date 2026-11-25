@@ -12,6 +12,16 @@
       "type": "string",
       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
     },
+    "valid_for": {
+      "description": "How long the producer stands behind the document, in integer seconds (>= 1).",
+      "type": "integer",
+      "minimum": 1
+    },
+    "declaration": {
+      "description": "SHA-256 digest of the canonical watch declaration, or null when undeclared.",
+      "type": ["string", "null"],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
     "cluster": {
       "type": "object",
       "additionalProperties": false,

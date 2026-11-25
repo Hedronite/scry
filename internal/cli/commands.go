@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Hedronite/scry/internal/config"
 	"github.com/Hedronite/scry/internal/exitcode"
 )
 
@@ -63,6 +64,32 @@ func newWait(s Streams) *cobra.Command {
 	c.bind(cmd)
 	cmd.Flags().StringVar(&forWhat, "for", "", flagFor)
 	cmd.Flags().DurationVar(&timeout, "timeout", 60*time.Second, flagTimeout)
+	return cmd
+}
+
+// newValidate checks a config file and nothing else: no kubeconfig is opened
+// and no cluster is contacted. The output never names the path.
+func newValidate(s Streams) *cobra.Command {
+	var path string
+	cmd := &cobra.Command{
+		Use:     "validate",
+		Short:   validateShort,
+		Long:    validateLong,
+		Example: validateExample,
+		Args:    cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			if path == "" {
+				return usage("validate needs --config FILE")
+			}
+			cfg, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(s.Out, "ok: %s, clusters: %d\n", config.SchemaV0, len(cfg.Clusters))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&path, "config", "", flagValidateConfig)
 	return cmd
 }
 

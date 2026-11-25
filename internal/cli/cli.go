@@ -58,7 +58,7 @@ func NewRoot(s Streams) *cobra.Command {
 	root.SetOut(s.Out)
 	root.SetErr(s.Err)
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.AddCommand(newStatus(s), newWait(s), newVersion(s))
+	root.AddCommand(newStatus(s), newWait(s), newValidate(s), newVersion(s))
 	return root
 }
 
@@ -72,6 +72,9 @@ type Common struct {
 	Config             string
 	JSON               bool
 	Quiet              bool
+	ValidFor           int
+
+	declaration *string // from the config file, once it has loaded
 }
 
 func (c *Common) bind(cmd *cobra.Command) {
@@ -84,6 +87,7 @@ func (c *Common) bind(cmd *cobra.Command) {
 	f.StringVar(&c.Config, "config", "", flagConfig)
 	f.BoolVar(&c.JSON, "json", false, flagJSON)
 	f.BoolVar(&c.Quiet, "quiet", false, flagQuiet)
+	f.IntVar(&c.ValidFor, "valid-for", report.DefaultValidFor, flagValidFor)
 }
 
 func usage(format string, args ...any) error {
@@ -95,6 +99,9 @@ func usage(format string, args ...any) error {
 func (c *Common) Validate() error {
 	if c.JSON && c.Quiet {
 		return usage("--json and --quiet cannot be used together")
+	}
+	if c.ValidFor < 1 {
+		return usage("--valid-for must be a whole number of seconds, at least 1")
 	}
 	switch c.Expected {
 	case "", string(report.Light), string(report.Dark):

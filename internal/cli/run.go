@@ -49,6 +49,7 @@ func resolve(c *Common) (kube.Options, error) {
 	if err != nil {
 		return o, err
 	}
+	c.declaration = cfg.Declaration
 	alias := c.Cluster
 	if alias == "" {
 		switch len(cfg.Clusters) {
@@ -105,9 +106,17 @@ func failureDoc(cl report.Cluster, err error) report.Document {
 	}, nowFunc())
 }
 
+// stamp sets the header fields that the run, not the observation, decides.
+func (c *Common) stamp(d report.Document) report.Document {
+	d.ValidFor = c.ValidFor
+	d.Declaration = c.declaration
+	return d
+}
+
 // emit prints the document in the chosen form and returns the process exit as
 // an error the root command maps to a code without printing anything more.
 func emit(s Streams, c *Common, d report.Document, extra error) error {
+	d = c.stamp(d)
 	if !c.Quiet {
 		switch {
 		case c.JSON:
@@ -157,7 +166,21 @@ func (o outOpt) validate(c *Common) error {
 	case "-":
 		return usage("--out takes a file path, not stdout; use --json to print the document")
 	}
-	for _, other := range []string{c.Kubeconfig, c.Config} {
+	protected := []string{c.Kubeconfig, c.Config}
+	if c.AllowEnvKubeconfig {
+		// Every file $KUBECONFIG names, even when --kubeconfig takes over: the
+		// run was given permission to read them, never to replace them.
+		protected = append(protected, kube.EnvKubeconfigs()...)
+	}
+	return o.guard(protected...)
+}
+
+// guard refuses an --out that names any of the protected files.
+func (o outOpt) guard(protected ...string) error {
+	if !o.set {
+		return nil
+	}
+	for _, other := range protected {
 		if other != "" && samePath(o.path, other) {
 			return usage("--out must not be the kubeconfig or config file")
 		}
@@ -173,9 +196,43 @@ func samePath(a, b string) bool {
 			return true
 		}
 	}
-	aa, errA := filepath.Abs(a)
-	bb, errB := filepath.Abs(b)
+	aa, errA := canonical(a)
+	bb, errB := canonical(b)
 	return errA == nil && errB == nil && aa == bb
+}
+
+// maxLinks bounds the symbolic links canonical follows, as the kernel does.
+const maxLinks = 40
+
+// canonical is the absolute name path leads to, following symbolic links even
+// when the final target does not exist. It never cleans a path lexically before
+// the links in it are resolved: "link/.." is not the directory holding link.
+func canonical(path string) (string, error) {
+	for range maxLinks {
+		target, err := os.Readlink(path)
+		if err != nil {
+			break // not a link, or nothing there
+		}
+		if !filepath.IsAbs(target) {
+			dir, _ := filepath.Split(path)
+			target = dir + target
+		}
+		path = target
+	}
+	dir, base := filepath.Split(path)
+	if !filepath.IsAbs(dir) {
+		// Joined by hand: the working directory may itself be reached through
+		// a link, and must be resolved with the rest.
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		dir = wd + string(os.PathSeparator) + dir
+	}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		path = filepath.Join(resolved, base)
+	}
+	return filepath.Abs(path)
 }
 
 // publishable reports whether a document goes to the --out file: exits 0, 1, 2
@@ -195,6 +252,7 @@ func publishable(d report.Document) bool {
 // A failed write replaces the document with an unobserved out_write_failed one
 // (exit 3) so stdout and the exit code still agree; the old file is untouched.
 func finishStatus(s Streams, c *Common, o outOpt, d report.Document, extra error) error {
+	d = c.stamp(d)
 	if o.set && publishable(d) {
 		b, err := marshalDoc(d)
 		if err == nil {
@@ -231,8 +289,9 @@ func runStatus(ctx context.Context, s Streams, c *Common, o outOpt) error {
 	if err != nil {
 		return finishStatus(s, c, o, failureDoc(clusterOf(opts), err), err)
 	}
-	if o.set && opts.Kubeconfig != "" && samePath(o.path, opts.Kubeconfig) {
-		return usage("--out must not be the kubeconfig or config file")
+	// The config entry may have supplied the kubeconfig.
+	if err := o.guard(opts.Kubeconfig); err != nil {
+		return err
 	}
 	obs, err := newObserver(opts)
 	if err != nil {

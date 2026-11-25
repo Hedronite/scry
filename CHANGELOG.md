@@ -2,6 +2,24 @@
 
 All notable changes to Scry are recorded here. Scry follows [Semantic Versioning](https://semver.org/); while the major version is 0, the documents `scry.status/v0`, `scry.config/v0` and `scry.version/v0` change only additively.
 
+## [Unreleased]
+
+A consumer that validates documents against a pinned copy of `scry.status/v0` must refresh it before taking this release: documents have new fields.
+
+### Added
+
+- `scry validate --config FILE` checks a config file without contacting any cluster, and `schema/scry.config.v0.json` publishes its shape.
+- Every status document carries `valid_for` (`--valid-for SECONDS` on `status` and `wait`, default 120) and `declaration` (the config file's optional `declaration = "sha256:<64 hex>"`, or `null`).
+
+### Fixed
+
+- `status --allow-env-kubeconfig --out PATH` could overwrite the file `$KUBECONFIG` names. Every such file is now refused (exit 8), with symbolic links and unclean paths resolved.
+- `wait` exited 2 for a cluster that was ready but RED (for example, no node Ready). It now exits 1, as its help says. `status` is unchanged.
+
+### Changed
+
+- Config key names are now case-sensitive. A file that spelled a key `Alias` or `[[Cluster]]` was accepted before and is now refused (exit 3); with both `alias` and `Alias`, the second silently won.
+
 ## [0.1.0] - 2026-11-14
 
 First release. Scry is a small, inspect-only command-line tool that answers one question about a Kubernetes or h3s cluster: is it ready, and if not, what is not?

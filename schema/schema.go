@@ -9,6 +9,11 @@ import _ "embed"
 //go:embed scry.status.v0.json
 var StatusV0 []byte
 
+// ConfigV0 is schema/scry.config.v0.json.
+//
+//go:embed scry.config.v0.json
+var ConfigV0 []byte
+
 // VersionV0 is schema/scry.version.v0.json.
 //
 //go:embed scry.version.v0.json
