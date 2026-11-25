@@ -5,7 +5,7 @@ Scry is an inspect-only readiness CLI. A change that lets it write to a cluster,
 ## Workflow
 
 - Open a pull request against `main`. `main` is protected: no direct pushes, linear history, squash merge.
-- CI must be green: build, `go vet`, `go test -race`, golangci-lint, govulncheck, schema conformance, `hack/scrub.sh`, the three cross-compiles, and the reproducibility job (two clean builds of `hack/release.sh` must hash identically).
+- CI must be green: build, `go vet`, `go test -race`, golangci-lint, govulncheck, schema conformance, `hack/scrub.sh`, `scripts/check-vendor.sh` (vendored files match their recorded digest and upstream commit; `--offline` skips only the upstream half, and never in CI), the three cross-compiles, and the reproducibility job (two clean builds of `hack/release.sh` must hash identically).
 - Tests use `httptest` and throwaway kubeconfigs created in `t.TempDir()`. Do not commit a kubeconfig, certificate, token, address or hostname, real or not; fixtures use synthetic values and slugs.
 - Commit and PR text describe the change. Do not name hosts, machines or people.
 
