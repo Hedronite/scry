@@ -16,6 +16,10 @@ import (
 // SchemaV0 is the value of Document.Schema.
 const SchemaV0 = "scry.status/v0"
 
+// DefaultValidFor is how many seconds a document stands for unless the caller
+// says otherwise: twice the 60 s interval of the example timers.
+const DefaultValidFor = 120
+
 // MaxReasonLen bounds node condition reasons copied from the server.
 const MaxReasonLen = 120
 
@@ -153,6 +157,8 @@ type Wait struct {
 type Document struct {
 	Schema      string            `json:"schema"`
 	GeneratedAt Timestamp         `json:"generated_at"`
+	ValidFor    int               `json:"valid_for"`   // seconds the producer stands behind the document, >= 1
+	Declaration *string           `json:"declaration"` // from the config file; null when undeclared
 	Cluster     Cluster           `json:"cluster"`
 	Server      *Server           `json:"server,omitempty"`
 	Apiserver   Apiserver         `json:"apiserver"`
@@ -186,10 +192,14 @@ func (d Document) MarshalJSON() ([]byte, error) {
 }
 
 // ExitCode is the process exit code for the document (spec section 4.3).
-// A wait that timed out is always 2, whatever the last poll saw.
+// A wait that timed out is always 2, whatever the last poll saw. A wait that
+// ended ready is never 2: ready but degraded is 1, whatever the severity.
 func (d Document) ExitCode() exitcode.Code {
 	if d.Wait != nil && d.Wait.Outcome == WaitTimeout {
 		return exitcode.Red
+	}
+	if d.Wait != nil && d.Wait.Outcome == WaitReady && d.Observed && d.Severity == Red {
+		return exitcode.Yellow
 	}
 	if !d.Observed {
 		if d.Error != nil {

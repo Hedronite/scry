@@ -1,6 +1,8 @@
 {
   "schema": "scry.status/v0",
   "generated_at": "2026-11-13T20:00:00Z",
+  "valid_for": 120,
+  "declaration": null,
   "cluster": {
     "alias": "lab-two",
     "expected": "light"

@@ -28,12 +28,12 @@ Point the file source for Scry in Vigil's configuration at the same path. Vigil'
 | When | Exits 0, 1, 2 (observed) and 4, 5, 6 (unobserved: auth, TLS, transport). |
 | When not | Exits 3, 7 and 8 write nothing and leave the last file in place, so Vigil ages it into `stale`. |
 | Failure | If the write fails, the temp file is removed, the old file stays byte for byte, and Scry exits 3 with reason `out_write_failed`. Stdout then shows an unobserved document carrying that reason, and stderr one line: `scry: cannot write the --out file` (silent with `--quiet`). The path and the operating-system error are never printed. If only the final directory fsync fails after the rename succeeded, the new file is in place: Scry prints one warning line on stderr (`scry: warning: the --out file was written but the directory sync failed`, silent with `--quiet`) and the exit code follows the status result, not 3. |
-| Refused | `--out ""`, `--out -`, and a path that is the kubeconfig or the `--config` file (an atomic rewrite would destroy it) are usage errors (exit 8). |
+| Refused | `--out ""`, `--out -`, and a path that is the kubeconfig or the `--config` file (an atomic rewrite would destroy it) are usage errors (exit 8). With `--allow-env-kubeconfig` the same holds for every file `$KUBECONFIG` names. Symbolic links and unclean paths are resolved before the comparison. |
 | Links | A symbolic link at `PATH` is replaced, not followed. |
 
 The directory must already exist and be writable by the job's user; Scry does not create it. A process killed mid-write can leave a `.scry-out-*.tmp` file beside `PATH`; Vigil ignores it.
 
-`generated_at` is the freshness Vigil reads. A document whose `observed` is `false` is still a fresh file; Vigil shows the source as `unavailable` and it never caps `overall`.
+Every document carries `valid_for` (whole seconds it stands; `--valid-for`, default 120) and `declaration` (from the config file, or `null`). `generated_at` is the freshness Vigil reads. A document whose `observed` is `false` is still a fresh file; Vigil shows the source as `unavailable` and it never caps `overall`.
 
 ## Mapping `scry.status/v0` to Vigil `scry{}`
 
@@ -56,7 +56,7 @@ Two cases to know:
 - **Unobserved** (`observed: false`, exits 4, 5, 6): `observed: false`, `generated_at`, `cluster_alias`, `severity: null` and `reasons` (the failure reason, for example `auth_rejected`), and no `counts`. Vigil's own `scry-unobserved` golden is the minimal form, `{"observed": false}`, and is also valid; a reader may emit either. This feed carries the extra fields so Vigil can age the file and show why.
 - **No `/readyz` answer** (`apiserver_down`, `expected_dark`): the document has no `readyz` block, so `readyz_pass` and `readyz_fail` are both 0 and `nodes_*` are 0. The counts describe what was seen, not the verdict; `severity` and `reasons` carry the verdict. A cluster declared `--expected dark` that is unreachable is GREEN with reason `expected_dark`.
 
-Not exported: node names and reasons, server version and flavor, API latency, readyz check names and messages, `apiserver.result` and `livez`, `cluster.expected`, and any `wait` block (`status` never writes one). That is the Vigil contract, and it keeps the file free of addresses and names.
+Not exported: `valid_for`, `declaration`, node names and reasons, server version and flavor, API latency, readyz check names and messages, `apiserver.result` and `livez`, `cluster.expected`, and any `wait` block (`status` never writes one). That is the Vigil contract, and it keeps the file free of addresses and names.
 
 Vigil treats an unknown reason as plain text, so a reason Scry adds later (additive within `v0`) needs no Vigil change.
 

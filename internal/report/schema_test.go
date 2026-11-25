@@ -25,6 +25,7 @@ func full() report.Document {
 	return report.Document{
 		Schema:      report.SchemaV0,
 		GeneratedAt: ts(),
+		ValidFor:    report.DefaultValidFor,
 		Cluster:     report.Cluster{Alias: "lab-one", Expected: report.Light},
 		Server:      &report.Server{Version: "v1.34.0+h3s", Flavor: "h3s"},
 		Apiserver:   report.Apiserver{Result: report.Up, HTTPStatus: ptr(200), LatencyMS: ptr(int64(12)), Livez: "ok"},
@@ -62,7 +63,7 @@ func TestDriftFullDocumentValidates(t *testing.T) {
 
 func TestMinimalUnobservedValidates(t *testing.T) {
 	d := report.Document{
-		Schema: report.SchemaV0, GeneratedAt: ts(),
+		Schema: report.SchemaV0, GeneratedAt: ts(), ValidFor: 1,
 		Cluster:   report.Cluster{Alias: "unnamed", Expected: report.Light},
 		Apiserver: report.Apiserver{Result: report.Up},
 		Observed:  false,
@@ -104,13 +105,18 @@ func TestInvalidDocumentsRejected(t *testing.T) {
 		"observed with error": mutate(func(m map[string]any) {
 			m["error"] = map[string]any{"code": "internal", "message": "x"}
 		}),
-		"alias is a url":   mutate(func(m map[string]any) { m["cluster"].(map[string]any)["alias"] = "https://x.example" }),
-		"alias too long":   mutate(func(m map[string]any) { m["cluster"].(map[string]any)["alias"] = strings.Repeat("a", 33) }),
-		"bad severity":     mutate(func(m map[string]any) { m["severity"] = "ORANGE" }),
-		"bad reason":       mutate(func(m map[string]any) { m["reasons"] = []string{"made_up"} }),
-		"bad result":       mutate(func(m map[string]any) { m["apiserver"].(map[string]any)["result"] = "maybe" }),
-		"bad schema const": mutate(func(m map[string]any) { m["schema"] = "scry.status/v1" }),
-		"non-utc time":     mutate(func(m map[string]any) { m["generated_at"] = "2026-11-13T15:00:00-05:00" }),
+		"alias is a url":       mutate(func(m map[string]any) { m["cluster"].(map[string]any)["alias"] = "https://x.example" }),
+		"alias too long":       mutate(func(m map[string]any) { m["cluster"].(map[string]any)["alias"] = strings.Repeat("a", 33) }),
+		"bad severity":         mutate(func(m map[string]any) { m["severity"] = "ORANGE" }),
+		"zero valid_for":       mutate(func(m map[string]any) { m["valid_for"] = 0 }),
+		"duration valid_for":   mutate(func(m map[string]any) { m["valid_for"] = "60s" }),
+		"fractional valid_for": mutate(func(m map[string]any) { m["valid_for"] = 1.5 }),
+		"bad declaration":      mutate(func(m map[string]any) { m["declaration"] = "sha256:abc" }),
+		"numeric declaration":  mutate(func(m map[string]any) { m["declaration"] = 7 }),
+		"bad reason":           mutate(func(m map[string]any) { m["reasons"] = []string{"made_up"} }),
+		"bad result":           mutate(func(m map[string]any) { m["apiserver"].(map[string]any)["result"] = "maybe" }),
+		"bad schema const":     mutate(func(m map[string]any) { m["schema"] = "scry.status/v1" }),
+		"non-utc time":         mutate(func(m map[string]any) { m["generated_at"] = "2026-11-13T15:00:00-05:00" }),
 		"node reason over 120": mutate(func(m map[string]any) {
 			m["nodes"].(map[string]any)["items"].([]any)[0].(map[string]any)["reason"] = strings.Repeat("r", 121)
 		}),
@@ -152,6 +158,12 @@ func TestExitCodeMapping(t *testing.T) {
 		{"silent peer", report.Document{Error: &report.ErrorBody{Code: exitcode.HTTPUnresponsive}}, exitcode.Transport},
 		{"wait on dark", report.Document{Error: &report.ErrorBody{Code: exitcode.WaitExpectedDark}}, exitcode.Config},
 		{"no error body", report.Document{}, exitcode.Internal},
+		{"wait ready green", report.Document{Observed: true, Severity: report.Green,
+			Wait: &report.Wait{Outcome: report.WaitReady, Polls: 1}}, exitcode.Green},
+		{"wait ready yellow", report.Document{Observed: true, Severity: report.Yellow,
+			Wait: &report.Wait{Outcome: report.WaitReady, Polls: 1}}, exitcode.Yellow},
+		{"wait ready red is degraded, not a timeout", report.Document{Observed: true, Severity: report.Red,
+			Wait: &report.Wait{Outcome: report.WaitReady, Polls: 1}}, exitcode.Yellow},
 		{"wait timeout beats last poll", report.Document{Observed: true, Severity: report.Yellow,
 			Wait: &report.Wait{Outcome: report.WaitTimeout, Polls: 4}}, exitcode.Red},
 		{"wait timeout, never observed", report.Document{Error: &report.ErrorBody{Code: exitcode.HTTPUnresponsive},

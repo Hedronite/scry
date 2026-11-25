@@ -8,6 +8,8 @@ import (
 	"errors"
 	"io"
 	"os"
+	"regexp"
+	"slices"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -36,12 +38,14 @@ type Cluster struct {
 
 // Config is a validated scry.config/v0 file.
 type Config struct {
-	Clusters []Cluster
+	Clusters    []Cluster
+	Declaration *string // copied into every document; nil when the key is absent
 }
 
 type rawFile struct {
-	Schema  string       `toml:"schema"`
-	Cluster []rawCluster `toml:"cluster"`
+	Schema      string       `toml:"schema"`
+	Declaration *string      `toml:"declaration"`
+	Cluster     []rawCluster `toml:"cluster"`
 }
 
 type rawCluster struct {
@@ -49,6 +53,49 @@ type rawCluster struct {
 	Kubeconfig string `toml:"kubeconfig"`
 	Expected   string `toml:"expected"`
 	Timeout    string `toml:"timeout"`
+}
+
+var declarationRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// The keys of scry.config/v0, in their exact spelling.
+var (
+	fileKeys    = []string{"schema", "declaration", "cluster"}
+	clusterKeys = []string{"alias", "kubeconfig", "expected", "timeout"}
+)
+
+// exactKeys reports whether every key is spelled as scry.config/v0 spells it.
+// The strict decoder matches struct fields without regard to case, so on its
+// own it would accept "Alias", and let it silently override "alias".
+func exactKeys(data []byte) bool {
+	var doc map[string]any
+	if err := toml.Unmarshal(data, &doc); err != nil {
+		return false
+	}
+	for key := range doc {
+		if !slices.Contains(fileKeys, key) {
+			return false
+		}
+	}
+	clusters, present := doc["cluster"]
+	if !present {
+		return true
+	}
+	entries, ok := clusters.([]any)
+	if !ok {
+		return false
+	}
+	for _, entry := range entries {
+		table, ok := entry.(map[string]any)
+		if !ok {
+			return false
+		}
+		for key := range table {
+			if !slices.Contains(clusterKeys, key) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Load reads and validates the file at path. Every failure is an
@@ -83,11 +130,18 @@ func Parse(data []byte) (*Config, error) {
 		// toml errors quote file content; keep only the kind of failure.
 		return nil, exitcode.Wrap(exitcode.ConfigInvalid, err, "config is not valid TOML")
 	}
+	if !exactKeys(data) {
+		return nil, exitcode.New(exitcode.ConfigInvalid, "config has an unknown key; see scry.config/v0")
+	}
 	if raw.Schema != SchemaV0 {
 		return nil, exitcode.New(exitcode.ConfigInvalid, "config must start with schema = %q", SchemaV0)
 	}
+	if raw.Declaration != nil && !declarationRE.MatchString(*raw.Declaration) {
+		return nil, exitcode.New(exitcode.ConfigInvalid,
+			"declaration must be sha256: followed by 64 lowercase hex digits; leave the key out when undeclared")
+	}
 	seen := map[string]bool{}
-	cfg := &Config{}
+	cfg := &Config{Declaration: raw.Declaration}
 	for i, rc := range raw.Cluster {
 		c, err := validate(i+1, rc)
 		if err != nil {

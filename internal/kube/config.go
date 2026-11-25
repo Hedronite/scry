@@ -183,6 +183,10 @@ func loadingRules(o Options) (*clientcmd.ClientConfigLoadingRules, error) {
 		"pass --kubeconfig <path> (or --allow-env-kubeconfig to read KUBECONFIG)")
 }
 
+// EnvKubeconfigs lists the files $KUBECONFIG names, split as loading splits it.
+// It reads only the variable, never the files.
+func EnvKubeconfigs() []string { return splitPathList(os.Getenv("KUBECONFIG")) }
+
 // checkRefusals scans the merged kubeconfig before any client is built. Keys are
 // sorted so the reported refusal is deterministic.
 func checkRefusals(raw clientcmdapi.Config) error {

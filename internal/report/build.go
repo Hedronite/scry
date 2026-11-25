@@ -17,6 +17,7 @@ func Build(obs Observation, now time.Time) Document {
 	doc := Document{
 		Schema:      SchemaV0,
 		GeneratedAt: Timestamp{now},
+		ValidFor:    DefaultValidFor,
 		Cluster:     obs.Cluster,
 		Server:      obs.Server,
 		Apiserver:   obs.Apiserver,

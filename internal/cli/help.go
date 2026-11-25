@@ -9,7 +9,7 @@ const (
 
 It sends only allowlisted read-only GET requests (/readyz, /livez, /version, nodes) and is built so it cannot change anything. It never reads an implicit kubeconfig: pass --kubeconfig, or a config entry with --config. Output is a table by default, the scry.status/v0 JSON document with --json, or nothing at all with --quiet (the exit code is the answer; --quiet silences stdout and stderr entirely, and only usage errors print one line).
 
-Exit codes: 0 GREEN, 1 YELLOW, 2 RED (or a wait timeout), 3 config, 4 auth, 5 TLS, 6 transport, 7 internal, 8 usage. See 'scry status --help' for the cluster-side meanings.`
+Exit codes: 0 GREEN, 1 YELLOW (or a wait that ended ready but degraded), 2 RED (or a wait timeout), 3 config, 4 auth, 5 TLS, 6 transport, 7 internal, 8 usage. See 'scry status --help' for the cluster-side meanings.`
 
 	statusShort = "Observe a cluster once and report readiness"
 
@@ -26,7 +26,7 @@ A cluster declared --expected dark is GREEN (exit 0) when unreachable: dark on p
 
 Cluster selection: --config with --cluster picks that cluster's entry (kubeconfig path, expected state, timeout); with one entry in the file, --cluster can be omitted; flags always beat the entry. --cluster without --config only overrides the report's alias.
 
-Output: table by default, scry.status/v0 JSON with --json, nothing with --quiet. With --out PATH the full JSON document is also written to PATH (temp file in the same directory, fsync, atomic rename, mode 0644) on exits 0, 1, 2, 4, 5 and 6, never on 3, 7 or 8; a failed write exits 3 with reason out_write_failed. See docs/vigil.md. Exit codes for an observed cluster: 0 GREEN (including expected dark), 1 YELLOW, 2 RED. Without a document: 3 config, 4 auth, 5 TLS, 6 transport, 7 internal.`
+Output: table by default, scry.status/v0 JSON with --json, nothing with --quiet. Every document says how long it stands (valid_for, whole seconds, from --valid-for, default 120) and which declaration configured the run (declaration, copied from the config file, null without one). With --out PATH the full JSON document is also written to PATH (temp file in the same directory, fsync, atomic rename, mode 0644) on exits 0, 1, 2, 4, 5 and 6, never on 3, 7 or 8; a failed write exits 3 with reason out_write_failed. See docs/vigil.md. Exit codes for an observed cluster: 0 GREEN (including expected dark), 1 YELLOW, 2 RED. Without a document: 3 config, 4 auth, 5 TLS, 6 transport, 7 internal.`
 
 	statusExample = `  # report on a cluster (table)
   scry status --kubeconfig ./lab-one.kubeconfig
@@ -47,7 +47,7 @@ Output: table by default, scry.status/v0 JSON with --json, nothing with --quiet.
 
 	waitLong = `Poll the cluster until it is ready. Every poll observes the cluster once (fresh allowlisted requests, connection closed after each, so rotated certificates are picked up), on a bounded schedule: 500ms growing 1.5x to a 5s cap, no jitter, until a poll reports ready (observed, /readyz ok, apiserver up) or --timeout (default 60s) expires.
 
-Ready exits 0; ready but degraded exits 1. A timeout keeps the last poll's document, adds reason "timeout", and always exits 2. Config (3), auth (4), TLS (5) and internal (7) failures fail fast: waiting cannot heal them. Unreachable (down) and silent peers keep polling until the timeout.
+Ready exits 0; ready but degraded exits 1, even when the document's severity is RED (for example, no node is Ready). A timeout keeps the last poll's document, adds reason "timeout", and always exits 2. Config (3), auth (4), TLS (5) and internal (7) failures fail fast: waiting cannot heal them. Unreachable (down) and silent peers keep polling until the timeout.
 
 If the cluster is declared --expected dark, wait refuses immediately: exit 3, reason wait_expected_dark, zero requests made. Nothing can make a documented-dark apiserver pass readyz; pass --expected light to wait on a cluster that is supposed to come up.
 
@@ -62,6 +62,16 @@ There are no watches and no long-lived connections. An interrupt (Ctrl-C) ends t
   # gate a script on readiness without printing anything
   scry wait --for=readyz --kubeconfig ./lab-one.kubeconfig --quiet`
 
+	validateShort = "Check a config file without contacting any cluster"
+
+	validateLong = `Load and strictly validate a scry.config/v0 file: TOML syntax, the schema value, exact key names (unknown keys are errors), every cluster entry, unique aliases and the optional declaration. It opens no kubeconfig and sends no request.
+
+declaration is "sha256:" followed by 64 lowercase hex digits. TOML has no null: leave the key out when undeclared, and documents carry "declaration": null.
+
+Exit codes: 0 valid, 3 the file cannot be read or is invalid, 8 usage.`
+
+	validateExample = `  scry validate --config ./scry.toml`
+
 	versionShort = "Print the scry version"
 
 	flagKubeconfig = "path to the kubeconfig file (required unless --config supplies it)"
@@ -75,6 +85,9 @@ There are no watches and no long-lived connections. An interrupt (Ctrl-C) ends t
 	flagQuiet      = "print nothing; the exit code is the answer (silences stdout and stderr; usage errors still print one line)"
 	flagFor        = "what to wait for; only \"readyz\" is supported"
 	flagTimeout    = "give up after this long, for the whole run (default 60s; the config entry's timeout is per request)"
+
+	flagValidFor       = "whole seconds the document stands for (valid_for), at least 1"
+	flagValidateConfig = "path to the scry.config/v0 file to check (required)"
 
 	flagVersionJSON = "print scry.version/v0 as JSON"
 )
