@@ -245,24 +245,38 @@ func TestReasonsFitVigilPattern(t *testing.T) {
 	}
 }
 
-// TestAliasFitsVigilSlug: a valid Scry alias is always a valid Vigil slug, and
-// the two patterns agree on a probe set, so cluster_alias is copied unchanged.
-func TestAliasFitsVigilSlug(t *testing.T) {
+// TestAliasAgainstVigilSlug: Vigil's slug is Scry's alias rule without a
+// leading digit. Vigil's starts with a letter; a Scry alias may also start with
+// a digit, and such an alias cannot be carried as cluster_alias. The difference
+// is pinned here, so that either side moving is noticed.
+func TestAliasAgainstVigilSlug(t *testing.T) {
 	slug := vigilDef(t, "slug")
+	vigilAccepts := func(p string) bool {
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return validate(t, slug, b) == nil
+	}
 	probes := []string{
-		"", "a", "0", "lab-one", "a-b-c", "-a", "a-", "A", "a.b", "a_b", "a b", "a/b", "a:b",
+		"", "a", "0", "9lab", "0-a", "lab-one", "lab9", "a-b-c", "-a", "a-", "A", "a.b", "a_b", "a b", "a/b", "a:b",
 		"unnamed", report.UnnamedAlias,
-		strings.Repeat("a", 32), strings.Repeat("a", 33), "a" + strings.Repeat("-", 31), "é",
+		strings.Repeat("a", 32), strings.Repeat("a", 33), "a" + strings.Repeat("-", 31), strings.Repeat("9", 32), "é",
 	}
 	for _, p := range probes {
-		b, _ := json.Marshal(p)
-		vigilOK := validate(t, slug, b) == nil
-		if got := report.ValidAlias(p); got != vigilOK {
-			t.Errorf("alias %q: Scry valid=%v, Vigil slug valid=%v", p, got, vigilOK)
+		leadingDigit := p != "" && p[0] >= '0' && p[0] <= '9'
+		if got, want := vigilAccepts(p), report.ValidAlias(p) && !leadingDigit; got != want {
+			t.Errorf("alias %q: Vigil slug valid=%v, want %v (Scry valid=%v)", p, got, want, report.ValidAlias(p))
 		}
+	}
+	if !report.ValidAlias("9lab") {
+		t.Error("Scry no longer accepts a leading digit: docs/vigil.md says it does")
 	}
 	if !regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`).MatchString(report.UnnamedAlias) {
 		t.Errorf("fallback alias %q is not a valid alias", report.UnnamedAlias)
+	}
+	if !vigilAccepts(report.UnnamedAlias) {
+		t.Errorf("fallback alias %q is not a Vigil slug", report.UnnamedAlias)
 	}
 }
 
@@ -304,7 +318,7 @@ func TestVendoredSchemaIsUntouched(t *testing.T) {
 	if want := "sha256:  " + hex.EncodeToString(sum[:]); !strings.Contains(src, want) {
 		t.Fatalf("vendored schema changed: SOURCE does not carry %s", want)
 	}
-	if !strings.Contains(src, "commit:  44dfb0bb8d5c0598a44175cbe4478953f5c95d91") {
-		t.Fatal("SOURCE does not name Vigil commit 44dfb0b")
+	if !strings.Contains(src, "commit:  5a7d7d151a9c9cce4c07590ed0956e6e2f47dad4") {
+		t.Fatal("SOURCE does not name Vigil commit 5a7d7d1")
 	}
 }
