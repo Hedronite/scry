@@ -21,7 +21,7 @@
       "$ref": "#/$defs/timestamp"
     },
     "overall": {
-      "description": "Worst severity across available verdicts, after the stale cap and the missing-authority cap. Null when no authority could be read.",
+      "description": "Worst severity across available verdicts, after the stale cap, the missing-authority cap and the drift cap. Null when no authority could be read.",
       "type": [
         "string",
         "null"
@@ -70,6 +70,13 @@
     },
     "scry": {
       "$ref": "#/$defs/scry"
+    },
+    "declaration": {
+      "description": "Vigil's own configured declaration, the reference for declaration_drift, or null when undeclared.",
+      "$ref": "#/$defs/declaration"
+    },
+    "declaration_drift": {
+      "$ref": "#/$defs/declaration_drift"
     }
   },
   "$defs": {
@@ -81,10 +88,10 @@
     "slug": {
       "description": "Public-safe identifier. No addresses, no paths, no dots.",
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9\\-]{0,31}$"
+      "pattern": "^[a-z][a-z0-9\\-]{0,31}$"
     },
     "reason": {
-      "description": "Reason code. Authorities own their strings; Vigil validates the shape only and adds five of its own (source_stale, source_unavailable, schema_major, clock_skew, authority_unavailable).",
+      "description": "Reason code. Authorities own their strings; Vigil validates the shape only and adds six of its own (source_stale, source_unavailable, schema_major, clock_skew, authority_unavailable, declaration_drift).",
       "type": "string",
       "pattern": "^[a-z][a-z0-9_]{0,47}$"
     },
@@ -147,8 +154,53 @@
             "null"
           ],
           "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+        },
+        "received_at": {
+          "$ref": "#/$defs/received_at"
+        },
+        "valid_for": {
+          "$ref": "#/$defs/valid_for"
+        },
+        "declaration": {
+          "$ref": "#/$defs/declaration"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["state"],
+            "properties": {
+              "state": {
+                "const": "unavailable"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["state"],
+            "properties": {
+              "state": {
+                "enum": ["ok", "stale"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "severity": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
     },
     "vantage": {
       "description": "Carried from Simplex. A blind vantage is a verdict, not an unavailable source.",
@@ -255,6 +307,153 @@
         "vantage": {
           "description": "The Prometheus vantage that answered. Only meaningful for kind prom.",
           "$ref": "#/$defs/slug"
+        },
+        "received_at": {
+          "$ref": "#/$defs/received_at"
+        },
+        "valid_for": {
+          "$ref": "#/$defs/valid_for"
+        },
+        "declaration": {
+          "$ref": "#/$defs/declaration"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["state"],
+            "properties": {
+              "state": {
+                "const": "ok"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "detail_code": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["state"],
+            "properties": {
+              "state": {
+                "const": "unavailable"
+              }
+            }
+          },
+          "then": {
+            "required": ["detail_code"],
+            "properties": {
+              "detail_code": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "received_at": {
+      "description": "When Vigil first saw the document it read, by Vigil's own clock, or null when it read none.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"
+    },
+    "valid_for": {
+      "description": "The producer's own valid_for in seconds, as published and not tightened by Vigil, or null when the document has none.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "declaration": {
+      "description": "SHA-256 digest of a canonical watch declaration, or null when undeclared.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "declaration_drift": {
+      "description": "Which declaration each fresh witness document was produced under, compared with Vigil's own. Authority drift past the grace window raises overall from GREEN to YELLOW (never to RED, never overriding null); informational source drift is listed and never colours overall.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "in_grace",
+        "drifted",
+        "undeclared",
+        "by_declaration"
+      ],
+      "properties": {
+        "reference": {
+          "description": "Vigil's own declaration, or null when its config declares none. With no reference nothing is drift.",
+          "$ref": "#/$defs/declaration"
+        },
+        "in_grace": {
+          "description": "True while the grace window after a change of the reference is open.",
+          "type": "boolean"
+        },
+        "drifted": {
+          "description": "True when a fresh, declared document carries a digest other than the reference, in the grace window or after it.",
+          "type": "boolean"
+        },
+        "undeclared": {
+          "description": "Witnesses whose fresh document declares nothing. Not drift.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/slug"
+          }
+        },
+        "by_declaration": {
+          "description": "One entry for each distinct digest among the fresh, declared documents, the reference's own included.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "declaration",
+              "subjects"
+            ],
+            "properties": {
+              "declaration": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "subjects": {
+                "description": "The witnesses whose document carries this digest.",
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/slug"
+                }
+              }
+            }
+          }
+        }
+      },
+      "if": {
+        "required": ["reference"],
+        "properties": {
+          "reference": {
+            "type": "null"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "drifted": {
+            "const": false
+          }
         }
       }
     },

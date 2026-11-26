@@ -37,13 +37,13 @@ Every document carries `valid_for` (whole seconds it stands; `--valid-for`, defa
 
 ## Mapping `scry.status/v0` to Vigil `scry{}`
 
-Vigil's `scry{}` is frozen at `Hedronite/vigil` `44dfb0b` (`vigil.summary/v0`, `$defs/scry`): `additionalProperties: false`, counts and reasons only, no node names, no server details, no status. Scry is not an authority and never changes `overall`.
+Vigil's `scry{}` is frozen at `Hedronite/vigil` `5a7d7d1` (`vigil.summary/v0`, `$defs/scry`): `additionalProperties: false`, counts and reasons only, no node names, no server details, no status. Scry is not an authority and never changes `overall`.
 
 | Vigil `scry{}` | From the Scry document |
 | --- | --- |
 | `observed` | `observed` |
 | `generated_at` | `generated_at` (RFC 3339 UTC, accepted by Vigil's timestamp pattern) |
-| `cluster_alias` | `cluster.alias` (Scry's alias pattern and Vigil's slug pattern are the same) |
+| `cluster_alias` | `cluster.alias`, copied as it is. Vigil's slug starts with a letter, while a Scry alias may also start with a digit: a block carrying such an alias does not validate against `vigil.summary/v0`, so give a cluster you export an alias that starts with a letter |
 | `severity` | `severity` when observed; `null` when `observed` is `false` (the Scry document has no `severity` then) |
 | `reasons` | `reasons`, copied as they are, in order (all Scry reason codes fit Vigil's `^[a-z][a-z0-9_]{0,47}$`) |
 | `counts.nodes_total` | `nodes.total` (0 when `nodes` is absent) |
@@ -81,10 +81,10 @@ A YELLOW cluster with one node not ready (`testdata/status/yellow-unknown.json`)
 
 `go test ./internal/vigil` checks that:
 
-- every expected block validates against the vendored Vigil `$defs/scry` (`testdata/vigil/vendor/vigil.summary.v0.schema.json`, unmodified from Vigil `44dfb0bb8d5c0598a44175cbe4478953f5c95d91`; `SOURCE` beside it records the commit and a SHA-256, and a test fails if the file changes);
+- every expected block validates against the vendored Vigil `$defs/scry` (`testdata/vigil/vendor/vigil.summary.v0.schema.json`, unmodified from Vigil `5a7d7d151a9c9cce4c07590ed0956e6e2f47dad4`; `SOURCE` beside it records the commit and a SHA-256, and a test fails if the file changes);
 - a reference implementation of the mapping above, written independently of Scry's types, produces exactly each golden block from its input;
 - every exportable status fixture has a golden and no golden is orphaned;
-- every Scry reason code fits Vigil's reason pattern, Scry's alias rule agrees with Vigil's slug on a probe set, and Scry's timestamps fit Vigil's pattern;
+- every Scry reason code fits Vigil's reason pattern, Scry's alias rule agrees with Vigil's slug on a probe set except for a leading digit, which only Scry accepts, and Scry's timestamps fit Vigil's pattern;
 - the vendored schema still rejects node names, server detail, a status field, a bad severity, a bad alias, a bad reason and extra counts, so the check above proves something.
 
 To follow a Vigil schema change, re-vendor the file from the new commit, update `SOURCE`, and let those tests say what moved.

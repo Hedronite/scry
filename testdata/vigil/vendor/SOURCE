@@ -3,7 +3,7 @@ Vendored read-only copy. Do not edit; replace it only by re-vendoring from a new
 file:    vigil.summary.v0.schema.json
 repo:    https://github.com/Hedronite/vigil
 path:    schema/vigil.summary.v0.schema.json
-commit:  44dfb0bb8d5c0598a44175cbe4478953f5c95d91
-sha256:  268794be9c0c96dc4462a1f28944b67e173842af337a8c80713c36b0105ab97c
+commit:  5a7d7d151a9c9cce4c07590ed0956e6e2f47dad4
+sha256:  163f1b9c45b4865d9964cc777bc68e0ea2eac5eeb5ca3bd9a80635f5a276da0e
 licence: Apache-2.0 (same as Vigil)
 used by: internal/vigil tests ($defs/scry, $defs/reason, $defs/slug, $defs/timestamp)
